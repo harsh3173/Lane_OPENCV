@@ -1,0 +1,33 @@
+# Python environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Datasets / tubs / labels (not code)
+TUSimple/
+tub_*/
+test_label*.json
+
+# Generated calibration profiles
+calib_*.json
+
+# Media and outputs
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+# Model checkpoints
+*.pt
+*.h5
+
+# OS / misc
+.DS_Store
+
+# Data archives
+*.zip
+
+# Logs
+*.log
