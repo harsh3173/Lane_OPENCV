@@ -31,3 +31,6 @@ calib_*.json
 
 # Logs
 *.log
+
+# Conversation exports
+*.txt
