@@ -17,10 +17,8 @@ import os
 
 import cv2
 import numpy as np
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+# matplotlib is imported lazily inside the preview path only (keeps the Raspberry-Pi runtime,
+# which just needs cv2 + numpy, free of a matplotlib dependency).
 
 
 SEED_BOX = (0.42, 0.58, 0.80, 0.88)
@@ -211,6 +209,9 @@ def main():
         return
 
     import random
+    import matplotlib                                   # lazy: only the preview path needs it
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     sel = [paths[i] for i in random.Random(a.seed).sample(range(len(paths)), min(a.n, len(paths)))]
     fig, ax = plt.subplots(len(sel), 2, figsize=(7, 3 * len(sel)))
     if len(sel) == 1:

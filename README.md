@@ -75,6 +75,16 @@ python drive_gym.py --profile calib_sim.json --env donkey-generated-track-v0 \
     --steer-gain 3.0 --weight ground --const-throttle 0.2 --record run.mp4
 ```
 
+### Physical car (Raspberry Pi + DonkeyCar hardware)
+`drive_physical_raycast.py` — same hardware scaffold as a TFLite donkey driver (PiCamera 128×120,
+PCA9685 PWM, safety shutdown) but runs `RayPilot.perceive()` instead of a model. On boot it does a
+~3 s straight calibration (creep straight, sample the road, lock the colour ref), then drives.
+Image-only, no model file — works on a fresh clone. Tune `STEERING_GAIN`/`THROTTLE_BOOST`/PWM
+constants at the top; the runtime needs only `cv2` + `numpy` (matplotlib is import-lazy).
+```bash
+python drive_physical_raycast.py     # calibrate 3s straight on track, then autonomous
+```
+
 ### Per-domain ray params
 | Domain | Track cue | Key flags |
 |---|---|---|
