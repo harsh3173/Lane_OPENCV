@@ -10,6 +10,7 @@ Standalone experiment; does NOT modify ray_mask.py / ray_pilot.py / multi_ray.py
     .venv/bin/python lane_probe.py --img-dir tub_old_car/images --video --vid-out probe_oldcar.mp4
 """
 import argparse
+import math
 
 import cv2
 import numpy as np
@@ -31,23 +32,27 @@ def probe_dist(lab, xp, yp, ref, wl, half=4):
     return float(np.sqrt(np.sum(wvec * (c - ref) ** 2)))
 
 
-def analyze(bgr, ref, ref_v, kw, probes, probe_thr, connect_thr):
-    """Return center fan mask, and per-probe (xp, yp, state, dist, lane_mask). state is:
+def analyze(bgr, ref, ref_v, kw, probes, probe_thr, connect_thr, spread):
+    """Return center fan mask, and per-probe (xp, yp, state, dist, fan_mask). state is:
         OFF  - not road-coloured (boundary / off-track)
-        SAME - road-coloured but its fan is CONNECTED to the centre fan (same wide surface)
-        LANE - road-coloured AND a separate corridor (a genuine new lane)
+        SAME - its inward (toward-centre) fan REACHES the centre -> clear road path -> same surface
+        LANE - road-coloured but its inward fan is BLOCKED before the centre -> a divider -> new lane
+
+    Side probes cast DOWN-and-INWARD (aimed at the centre point), so the rays directly traverse the
+    region between the probe and the centre -> placement-independent connectivity / segregation.
     """
     H, W = bgr.shape[:2]
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
-    def fan_at(sx, sy):
-        eps = cast_fan(lab, hsv, ref, ref_v, sx, sy, kw["n_rays"], kw["a0"], kw["a1"],
+    def fan(sx, sy, a0, a1):
+        eps = cast_fan(lab, hsv, ref, ref_v, sx, sy, kw["n_rays"], a0, a1,
                        kw["white_margin"], kw["white_s"], kw["color_thr"], kw["wl"], kw["horizon"],
                        kw["edge_thr"], kw["edge_window"], kw["yellow_pass"])
         return fan_mask((H, W), (sx, sy), eps)
 
-    center = fan_at(W / 2.0, kw["seed_y"] * H)
+    cx, by = W / 2.0, kw["seed_y"] * H
+    center = fan(cx, by, kw["a0"], kw["a1"])               # centre still fans UP (current lane ahead)
     cset = center > 0
     out = []
     for (xf, yf) in probes:
@@ -55,11 +60,11 @@ def analyze(bgr, ref, ref_v, kw, probes, probe_thr, connect_thr):
         d = probe_dist(lab, xp, yp, ref, kw["wl"])
         if d >= probe_thr:
             out.append((xp, yp, "OFF", d, None)); continue
-        lane_mask = fan_at(float(xp), float(yp))
-        lset = lane_mask > 0
-        overlap = np.logical_and(cset, lset).sum() / max(int(lset.sum()), 1)
-        state = "SAME" if overlap >= connect_thr else "LANE"   # connected to centre -> same surface
-        out.append((xp, yp, state, d, lane_mask))
+        aim = math.degrees(math.atan2(-(by - yp), (cx - xp)))   # point toward the centre (down-inward)
+        inward = fan(float(xp), float(yp), aim - spread, aim + spread)
+        overlap = np.logical_and(cset, inward > 0).sum() / max(int((inward > 0).sum()), 1)
+        state = "SAME" if overlap >= connect_thr else "LANE"    # reached centre -> same surface
+        out.append((xp, yp, state, d, inward))
     return center, out
 
 
@@ -94,10 +99,11 @@ def overlay(bgr, center, probes_out, scale=3):
 def parse_args():
     p = argparse.ArgumentParser(description="Adjacent-lane probes via colour match to centre lane")
     p.add_argument("--img-dir", required=True)
-    p.add_argument("--probes", type=float, nargs="+", default=[0.20, 0.55, 0.80, 0.55],
+    p.add_argument("--probes", type=float, nargs="+", default=[0.15, 0.50, 0.85, 0.50],
                    help="flat list x,y,x,y... for side probes (smaller y = higher/further ahead)")
     p.add_argument("--probe-thr", type=float, default=22, help="LAB dist to centre ref: below = road-coloured")
-    p.add_argument("--connect-thr", type=float, default=0.15,
+    p.add_argument("--probe-spread", type=float, default=50, help="half-angle of the inward fan (deg)")
+    p.add_argument("--connect-thr", type=float, default=0.05,
                    help="probe-fan overlap with centre above this = SAME surface; below = separate LANE")
     p.add_argument("--seed-y", type=float, default=0.85)
     p.add_argument("--n-rays", type=int, default=50)
@@ -144,7 +150,7 @@ def main():
         lane_hist = []
         for p in seq:
             bgr = cv2.imread(p)
-            center, po = analyze(bgr, ref, ref_v, kw, probes, a.probe_thr, a.connect_thr)
+            center, po = analyze(bgr, ref, ref_v, kw, probes, a.probe_thr, a.connect_thr, a.probe_spread)
             lane_hist.append(1 + sum(1 for x in po if x[2] == "LANE"))
             writer.write(overlay(bgr, center, po))
         writer.release()
@@ -160,7 +166,7 @@ def main():
         ax = ax[None, :]
     for r, p in enumerate(sel):
         bgr = cv2.imread(p); rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        center, po = analyze(bgr, ref, ref_v, kw, probes, a.probe_thr, a.connect_thr)
+        center, po = analyze(bgr, ref, ref_v, kw, probes, a.probe_thr, a.connect_thr, a.probe_spread)
         ov = cv2.cvtColor(overlay(bgr, center, po, scale=1), cv2.COLOR_BGR2RGB)
         ax[r, 0].imshow(rgb); ax[r, 0].axis("off"); ax[r, 0].set_title("input")
         ax[r, 1].imshow(ov); ax[r, 1].axis("off")
