@@ -46,7 +46,7 @@ DOWNSCALE = 1.0                  # resize camera frame by this factor before per
 # --- RAY-CAST PILOT PARAMS (sim-tuned defaults; colour ref is set live by calibration) ---
 RAY_KW = dict(seed_y=0.85, n_rays=40, a0=8, a1=172, white_margin=90, white_s=60,
               color_thr=40, wl=0.1, horizon=0.35, edge_thr=22, edge_window=4)
-CTRL = dict(steer_gain=3.0, base_throttle=0.5, ema=0.4, offtrack_cov=0.10, clear_ref=0.75,
+CTRL = dict(steer_gain=3.4, base_throttle=0.5, ema=0.4, offtrack_cov=0.10, clear_ref=0.75,  # 3.4 = PS4-telemetry calibrated (tune_from_tub.py)
             weight="ground", persp_horizon=0.35, min_gap_frac=0.05,
             steer_trim=0.0, gain_left=None, gain_right=None)
 STEER_CENTER_PWM = int((STEERING_LEFT_PWM + STEERING_RIGHT_PWM) / 2)
