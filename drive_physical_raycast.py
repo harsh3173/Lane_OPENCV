@@ -37,8 +37,14 @@ STOP_ON_OFFTRACK = True          # cut throttle when off-track (safety)
 CALIB_SECONDS = 3.0              # straight-line calibration duration
 CALIB_THROTTLE = 0.18            # gentle forward throttle during calibration
 
+# --- PI PERFORMANCE ---
+# The 80-ray Python loop is the only real-time risk on a Pi 5. 40 rays keeps steering ~0.96
+# correlated with 80 (mean Δsteer 0.06); downscale is near-free (ray-cast is resolution-invariant).
+# If on-Pi FPS is low: lower n_rays further or set DOWNSCALE to 0.75 / 0.5.
+DOWNSCALE = 1.0                  # resize camera frame by this factor before perceive (1.0 = off)
+
 # --- RAY-CAST PILOT PARAMS (sim-tuned defaults; colour ref is set live by calibration) ---
-RAY_KW = dict(seed_y=0.85, n_rays=80, a0=8, a1=172, white_margin=90, white_s=60,
+RAY_KW = dict(seed_y=0.85, n_rays=40, a0=8, a1=172, white_margin=90, white_s=60,
               color_thr=40, wl=0.1, horizon=0.35, edge_thr=22, edge_window=4)
 CTRL = dict(steer_gain=3.0, base_throttle=0.5, ema=0.4, offtrack_cov=0.10, clear_ref=0.75,
             weight="ground", persp_horizon=0.35, min_gap_frac=0.05,
@@ -69,7 +75,10 @@ class PhysicalRayCar:
 
     def _grab_bgr(self):
         rgb = self.camera.run()                              # PiCamera gives RGB
-        return cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+        bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+        if DOWNSCALE != 1.0:                                 # near-free speedup (resolution-invariant)
+            bgr = cv2.resize(bgr, None, fx=DOWNSCALE, fy=DOWNSCALE, interpolation=cv2.INTER_AREA)
+        return bgr
 
     def calibrate_straight(self, seconds=CALIB_SECONDS):
         """Creep straight on the track for `seconds`, sampling the road colour -> lock the ref."""
