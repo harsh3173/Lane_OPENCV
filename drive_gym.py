@@ -38,6 +38,9 @@ def parse_args():
     p.add_argument("--deadband", type=float, default=None, help="anti-weave deadband on heading error (e.g. 0.1)")
     p.add_argument("--steer-damp", type=float, default=None, help="PD damping term (e.g. 0.4) to smooth overshoot")
     p.add_argument("--offtrack-cov", type=float, default=None, help="coverage below this = off-track (e.g. 0.10)")
+    p.add_argument("--steer-trim", type=float, default=None, help="constant steer offset to cancel center/camera bias")
+    p.add_argument("--gain-left", type=float, default=None, help="steering gain for LEFT turns (asymmetry)")
+    p.add_argument("--gain-right", type=float, default=None, help="steering gain for RIGHT turns (asymmetry)")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -90,8 +93,15 @@ def main():
         part.pilot.steer_damp = a.steer_damp
     if a.offtrack_cov is not None:
         part.pilot.offtrack_cov = a.offtrack_cov
+    if a.steer_trim is not None:
+        part.pilot.steer_trim = a.steer_trim
+    if a.gain_left is not None:
+        part.pilot.gain_left = a.gain_left
+    if a.gain_right is not None:
+        part.pilot.gain_right = a.gain_right
     print(f"steering: gain={part.pilot.steer_gain} weight={part.pilot.weight} ema={part.pilot.ema} "
-          f"deadband={part.pilot.steer_deadband} damp={part.pilot.steer_damp}")
+          f"deadband={part.pilot.steer_deadband} damp={part.pilot.steer_damp} "
+          f"trim={part.pilot.steer_trim} gainL={part.pilot.gain_left} gainR={part.pilot.gain_right}")
     conf = {"host": a.host, "port": a.port, "car_name": "ray-pilot"}
     if a.sim_path != "remote":                          # else: attach to an already-running sim
         conf["exe_path"] = a.sim_path

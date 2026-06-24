@@ -25,7 +25,8 @@ class RayPilot:
     def __init__(self, ref, ref_v, ray_kw, steer_gain=1.6, base_throttle=0.5,
                  ema=0.4, offtrack_cov=0.03, clear_ref=0.75,
                  weight="pixel", persp_horizon=0.35, min_gap_frac=0.05,
-                 offtrack_on=4, offtrack_off=3, steer_deadband=0.0, steer_damp=0.0):
+                 offtrack_on=4, offtrack_off=3, steer_deadband=0.0, steer_damp=0.0,
+                 steer_trim=0.0, gain_left=None, gain_right=None):
         self.ref, self.ref_v, self.ray_kw = ref, ref_v, ray_kw
         self.steer_gain, self.base_throttle = steer_gain, base_throttle
         self.ema, self.offtrack_cov, self.clear_ref = ema, offtrack_cov, clear_ref
@@ -41,6 +42,9 @@ class RayPilot:
         # anti-oscillation: deadband ignores tiny heading errors (no weave on straights); damp is a
         # derivative term that opposes fast steering swings (smooths curve overshoot)
         self.steer_deadband, self.steer_damp = steer_deadband, steer_damp
+        # left/right asymmetry correction: steer_trim = constant center-bias offset (camera/center
+        # offset); gain_left/right = per-direction gain (None -> use steer_gain) for unequal turn radii
+        self.steer_trim, self.gain_left, self.gain_right = steer_trim, gain_left, gain_right
         self._prev_err = 0.0
         self.s = 0.0          # EMA steer state
         self.t = 0.0          # EMA throttle state
@@ -85,7 +89,10 @@ class RayPilot:
                 error = (1.0 if error > 0 else -1.0) * max(0.0, abs(error) - self.steer_deadband)
             de = error - self._prev_err                         # PD damping term
             self._prev_err = error
-            raw_steer = float(np.clip(self.steer_gain * error + self.steer_damp * de, -1.0, 1.0))
+            gl = self.steer_gain if self.gain_left is None else self.gain_left
+            gr = self.steer_gain if self.gain_right is None else self.gain_right
+            g = gl if error < 0 else gr                         # per-direction gain (asymmetry)
+            raw_steer = float(np.clip(g * error + self.steer_damp * de + self.steer_trim, -1.0, 1.0))
             clearance = np.clip(lengths.max() / (self.clear_ref * H), 0.0, 1.0)
             raw_thr = self.base_throttle * clearance
             self.s = self.ema * raw_steer + (1 - self.ema) * self.s
@@ -104,7 +111,8 @@ class RayPilot:
                     ctrl=dict(steer_gain=self.steer_gain, base_throttle=self.base_throttle,
                               ema=self.ema, offtrack_cov=self.offtrack_cov, clear_ref=self.clear_ref,
                               weight=self.weight, persp_horizon=self.persp_horizon,
-                              min_gap_frac=self.min_gap_frac))
+                              min_gap_frac=self.min_gap_frac, steer_trim=self.steer_trim,
+                              gain_left=self.gain_left, gain_right=self.gain_right))
         with open(path, "w") as f:
             json.dump(prof, f, indent=2)
         return path
