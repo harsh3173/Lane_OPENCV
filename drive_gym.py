@@ -37,6 +37,7 @@ def parse_args():
     p.add_argument("--ema", type=float, default=None, help="override steer/throttle smoothing (lower=smoother)")
     p.add_argument("--deadband", type=float, default=None, help="anti-weave deadband on heading error (e.g. 0.1)")
     p.add_argument("--steer-damp", type=float, default=None, help="PD damping term (e.g. 0.4) to smooth overshoot")
+    p.add_argument("--offtrack-cov", type=float, default=None, help="coverage below this = off-track (e.g. 0.10)")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -87,6 +88,8 @@ def main():
         part.pilot.steer_deadband = a.deadband
     if a.steer_damp is not None:
         part.pilot.steer_damp = a.steer_damp
+    if a.offtrack_cov is not None:
+        part.pilot.offtrack_cov = a.offtrack_cov
     print(f"steering: gain={part.pilot.steer_gain} weight={part.pilot.weight} ema={part.pilot.ema} "
           f"deadband={part.pilot.steer_deadband} damp={part.pilot.steer_damp}")
     conf = {"host": a.host, "port": a.port, "car_name": "ray-pilot"}

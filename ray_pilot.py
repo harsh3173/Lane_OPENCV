@@ -128,10 +128,18 @@ def draw(bgr, r, scale=3):
     ang = np.deg2rad(90.0 - r["steer"] / max(1e-6, 1.0) * 60.0)   # +-60deg visual swing
     L = (0.45 * H) * s
     ex, ey = sx * s + np.cos(ang) * L, sy * s - np.sin(ang) * L
-    color = (0, 0, 255) if r["offtrack"] else (0, 200, 255)
+    off = r["offtrack"]
+    color = (0, 0, 255) if off else (0, 200, 255)
     cv2.arrowedLine(canvas, (int(sx * s), int(sy * s)), (int(ex), int(ey)), color, 3, tipLength=0.2)
-    txt = "OFF-TRACK" if r["offtrack"] else f"steer {r['steer']:+.2f}  thr {r['throttle']:.2f}"
-    cv2.putText(canvas, txt, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    if off:                                              # red border emphasis when off-track
+        cv2.rectangle(canvas, (0, 0), (W * s - 1, H * s - 1), (0, 0, 255), 5)
+    f = cv2.FONT_HERSHEY_SIMPLEX
+    # line 1 (always): steer / throttle
+    cv2.putText(canvas, f"steer {r['steer']:+.2f}  thr {r['throttle']:.2f}", (8, 22), f, 0.6, (0, 255, 255), 2)
+    # line 2 (always): persistent ON/OFF-TRACK flag + coverage
+    status = "OFF-TRACK" if off else "ON-TRACK"
+    scol = (0, 0, 255) if off else (0, 220, 0)
+    cv2.putText(canvas, f"{status}  cov {r['coverage'] * 100:.0f}%", (8, 46), f, 0.6, scol, 2)
     return canvas
 
 
