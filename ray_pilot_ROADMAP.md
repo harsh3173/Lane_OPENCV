@@ -68,7 +68,15 @@ Restore clearance-scaled throttle (currently constant 0.17): faster on straights
 - Recovery: from off-track / near-wall states.
 - **DoD:** robust laps across several sim tracks with recovery.
 
-## Phase 4 — Real-car port
+## Phase 4 — Real-car port — 🚧 DRIVER BUILT, pending on-Pi field test
+**Driver done:** `drive_physical_raycast.py` adapts a proven TFLite physical scaffold (PiCamera
+128×120 = our sim res, PCA9685 PWM ch14/ch1, safe shutdown) but runs `RayPilot.perceive()` instead of
+a model. Boot = ~3 s straight calibration (creep + sample road → lock colour ref) → autonomous.
+Image-only, no model file, runs on a fresh clone; runtime needs only cv2+numpy (matplotlib now lazy).
+**Field-verify on the Pi:** (1) FPS of the 80-ray loop — if low, drop `n_rays`/downscale; (2) steering
+direction (swap L/R PWM if reversed); (3) `offtrack_cov` for the real surface; (4) gain/`steer_trim`/
+asymmetric L-R gain. Workflow target met: **git clone → 3 s straight calibrate → drives.**
+
 **Goal:** run on the physical DonkeyCar (RPi/Jetson + camera + PWM).
 - **Compute:** the python ray loop is the main risk on-board. Mitigations: **downscale the image**
   (we proved ray-cast is resolution-invariant — free speed), **fewer rays** (~40), vectorise/numba the march.
@@ -94,5 +102,6 @@ Restore clearance-scaled throttle (currently constant 0.17): faster on straights
 4. **Sim→real gap** → expect a dedicated real recal + tuning pass; FOV/exposure differences.
 
 ## Suggested order
-✅ Phase 0 → ✅ Phase 1 → ✅ Phase 2 (closed loop, drives the track) → **Phase 2b throttle scheduling
-(next)** → Phase 3 (sharp-curve mid-field weighting, multi-track, recovery) → Phase 4 (real car).
+✅ Phase 0 → ✅ Phase 1 → ✅ Phase 2 (closed loop, drives the track) → 🚧 Phase 4 driver built
+(`drive_physical_raycast.py`), **next = on-Pi field test (FPS, PWM dir, gains/trim)**. Deferred:
+Phase 2b throttle scheduling, Phase 3 (sharp-curve mid-field weighting, multi-track, recovery).
