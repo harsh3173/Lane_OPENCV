@@ -77,22 +77,26 @@ def overlay(bgr, center, probes_out, scale=3):
         t = canvas.copy(); t[mm > 0] = color
         return cv2.addWeighted(canvas, 1 - a, t, a, 0)
 
-    canvas = tint(center, CENTER_COL)
+    # combined lane segmentation: EGO lane = centre fan + every SAME probe region (one surface);
+    # each LANE probe = its own adjacent-lane colour; OFF = boundary (no fill)
+    ego = center.copy()
+    for (xp, yp, state, d, m) in probes_out:
+        if state == "SAME" and m is not None:
+            ego = cv2.bitwise_or(ego, m)
+    canvas = tint(ego, CENTER_COL)                           # ego lane (green)
     labels = []
-    for i, (xp, yp, state, d, lane_mask) in enumerate(probes_out):
+    for i, (xp, yp, state, d, m) in enumerate(probes_out):
         side = "L" if i == 0 else "R"
-        if state == "LANE":                                  # genuine separate lane -> colour its fan
-            canvas = tint(lane_mask, LANE_COLS[i % len(LANE_COLS)]); col = LANE_COLS[i % len(LANE_COLS)]
-        elif state == "SAME":                                # same wide surface -> faint, white dot
-            canvas = tint(lane_mask, (220, 220, 220), a=0.15); col = (255, 255, 255)
+        if state == "LANE":
+            canvas = tint(m, LANE_COLS[i % len(LANE_COLS)]); col = LANE_COLS[i % len(LANE_COLS)]
         else:
-            col = OFF_COL
+            col = (255, 255, 255) if state == "SAME" else OFF_COL
         cv2.circle(canvas, (int(xp * s), int(yp * s)), 7, col, -1)
         cv2.circle(canvas, (int(xp * s), int(yp * s)), 7, (0, 0, 0), 1)
-        labels.append(f"{side}:{state}({d:.0f})")
+        labels.append(f"{side}:{state}")
     n_lanes = 1 + sum(1 for p in probes_out if p[2] == "LANE")
-    cv2.putText(canvas, f"lanes {n_lanes} | " + "  ".join(labels), (8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(canvas, f"ego + {n_lanes - 1} adj = {n_lanes} lane(s) | " + "  ".join(labels),
+                (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     return canvas
 
 
