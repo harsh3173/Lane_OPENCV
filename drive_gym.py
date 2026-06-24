@@ -1,11 +1,13 @@
 """Phase 2 closed-loop driver: ray-cast pilot in the DonkeyCar gym (gym_donkeycar).
 
 Requires (on YOUR machine, not runnable from the dev sandbox):
-    pip install gym gym_donkeycar
+    pip install gymnasium gym_donkeycar
     + the DonkeyCar sim binary (DonkeySimMac/Linux/Win) running or path via DONKEY_SIM_PATH.
 
-Image-only: the sim's cte/reward are NOT used for control (project constraint); we only log how many
-steps the car survives as a coarse performance metric.
+TELEMETRY-FREE BY DESIGN: the sim's cte / reward / info are never read (the step() helper discards
+them). The only sim-side signal used is `done`, and ONLY to reset the crashed car between episodes in
+this evaluation harness -- it never reaches perception or control, and the real car (donkey_part.py)
+never sees it. The "steps survived" print is a sim-harness convenience derived from that reset signal.
 
     # 1) make a calibration profile from a recorded tub of the same track (one-off):
     .venv/bin/python ray_pilot.py --img-dir tub_generated_track --white-margin 90 --color-thr 40 \
@@ -96,12 +98,13 @@ def main():
         out = e.reset()
         return out[0] if isinstance(out, tuple) else out
 
-    def step(e, action):                                # 4-tuple (gym) vs 5-tuple (gymnasium)
-        res = e.step(action)
-        if len(res) == 5:
-            obs, reward, term, trunc, info = res
-            return obs, reward, bool(term or trunc), info
-        return res
+    def step(e, action):                                # -> (obs, done). reward + info are
+        res = e.step(action)                            # DISCARDED on purpose: no telemetry (cte/
+        if len(res) == 5:                               # reward) is ever read. `done` is used only
+            obs, _, term, trunc, _ = res                # to reset the car in the sim harness, never
+            return obs, bool(term or trunc)             # for perception/control (the real car never
+        obs, _, done, _ = res                           # sees it).
+        return obs, bool(done)
 
     def get_img(obs):                                   # obs may be (img, info) or img
         arr = np.asarray(obs[0] if isinstance(obs, (tuple, list)) else obs)
@@ -114,7 +117,7 @@ def main():
         from ray_mask import seed_ref
         refs = []
         for i in range(a.warmup_steps):
-            obs, _, done, _ = step(env, np.array([0.0, a.creep_throttle], np.float32))
+            obs, done = step(env, np.array([0.0, a.creep_throttle], np.float32))
             img = get_img(obs)
             if img is not None and i >= a.warmup_steps // 2:   # second half: car is on clean road
                 refs.append(seed_ref(cv2.cvtColor(img, cv2.COLOR_RGB2BGR)))
@@ -139,7 +142,7 @@ def main():
                 H, W = frame.shape[:2]
                 writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*"mp4v"), 20, (W, H))
             writer.write(frame)
-        obs, reward, done, info = step(env, np.array([angle, throttle], dtype=np.float32))
+        obs, done = step(env, np.array([angle, throttle], dtype=np.float32))
         survived += 1
         if done:                                        # left track / timed out
             episodes += 1
