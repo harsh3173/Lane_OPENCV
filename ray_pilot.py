@@ -25,7 +25,7 @@ class RayPilot:
     def __init__(self, ref, ref_v, ray_kw, steer_gain=1.6, base_throttle=0.5,
                  ema=0.4, offtrack_cov=0.03, clear_ref=0.75,
                  weight="pixel", persp_horizon=0.35, min_gap_frac=0.05,
-                 offtrack_on=4, offtrack_off=3):
+                 offtrack_on=4, offtrack_off=3, steer_deadband=0.0, steer_damp=0.0):
         self.ref, self.ref_v, self.ray_kw = ref, ref_v, ray_kw
         self.steer_gain, self.base_throttle = steer_gain, base_throttle
         self.ema, self.offtrack_cov, self.clear_ref = ema, offtrack_cov, clear_ref
@@ -38,6 +38,10 @@ class RayPilot:
         self.offtrack_on, self.offtrack_off = offtrack_on, offtrack_off
         self._low = self._good = 0
         self.offtrack_state = False
+        # anti-oscillation: deadband ignores tiny heading errors (no weave on straights); damp is a
+        # derivative term that opposes fast steering swings (smooths curve overshoot)
+        self.steer_deadband, self.steer_damp = steer_deadband, steer_damp
+        self._prev_err = 0.0
         self.s = 0.0          # EMA steer state
         self.t = 0.0          # EMA throttle state
         a0, a1, n = ray_kw["a0"], ray_kw["a1"], ray_kw["n_rays"]
@@ -76,7 +80,12 @@ class RayPilot:
         valid = w.sum() > 1e-6 and cov >= self.offtrack_cov     # enough free space to trust a heading
         if valid:
             heading = float((w * self.angles).sum() / w.sum())  # free-space heading
-            raw_steer = float(np.clip((90.0 - heading) / 90.0 * self.steer_gain, -1.0, 1.0))
+            error = (90.0 - heading) / 90.0                     # +ve = steer right
+            if self.steer_deadband > 0:                         # soft deadband -> no weave on straights
+                error = (1.0 if error > 0 else -1.0) * max(0.0, abs(error) - self.steer_deadband)
+            de = error - self._prev_err                         # PD damping term
+            self._prev_err = error
+            raw_steer = float(np.clip(self.steer_gain * error + self.steer_damp * de, -1.0, 1.0))
             clearance = np.clip(lengths.max() / (self.clear_ref * H), 0.0, 1.0)
             raw_thr = self.base_throttle * clearance
             self.s = self.ema * raw_steer + (1 - self.ema) * self.s

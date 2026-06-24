@@ -32,7 +32,9 @@ def parse_args():
     # steering-calibration overrides (None = keep the profile's value)
     p.add_argument("--steer-gain", type=float, default=None, help="override steering gain")
     p.add_argument("--weight", choices=["pixel", "ground"], default=None, help="override heading weight")
-    p.add_argument("--ema", type=float, default=None, help="override steer/throttle smoothing")
+    p.add_argument("--ema", type=float, default=None, help="override steer/throttle smoothing (lower=smoother)")
+    p.add_argument("--deadband", type=float, default=None, help="anti-weave deadband on heading error (e.g. 0.1)")
+    p.add_argument("--steer-damp", type=float, default=None, help="PD damping term (e.g. 0.4) to smooth overshoot")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -79,7 +81,12 @@ def main():
         part.pilot.weight = a.weight
     if a.ema is not None:
         part.pilot.ema = a.ema
-    print(f"steering: gain={part.pilot.steer_gain} weight={part.pilot.weight} ema={part.pilot.ema}")
+    if a.deadband is not None:
+        part.pilot.steer_deadband = a.deadband
+    if a.steer_damp is not None:
+        part.pilot.steer_damp = a.steer_damp
+    print(f"steering: gain={part.pilot.steer_gain} weight={part.pilot.weight} ema={part.pilot.ema} "
+          f"deadband={part.pilot.steer_deadband} damp={part.pilot.steer_damp}")
     conf = {"host": a.host, "port": a.port, "car_name": "ray-pilot"}
     if a.sim_path != "remote":                          # else: attach to an already-running sim
         conf["exe_path"] = a.sim_path
@@ -122,18 +129,18 @@ def main():
 
     writer = None
     survived, episodes = 0, 0
-    t0 = time.time()
+    t0, steers = time.time(), []
     for step_i in range(a.steps):
-        angle, throttle = part.run(obs)                 # obs is the RGB camera image
-        obs, reward, done, info = step(env, np.array([angle, throttle], dtype=np.float32))
-        survived += 1
-        if a.record:
-            r = part.pilot.perceive(cv2.cvtColor(np.asarray(obs), cv2.COLOR_RGB2BGR))
-            frame = draw(cv2.cvtColor(np.asarray(obs), cv2.COLOR_RGB2BGR), r)
+        angle, throttle = part.run(obs)                 # perceives obs ONCE (stored on the part)
+        steers.append(angle)
+        if a.record and getattr(part, "last_r", None) is not None:
+            frame = draw(part.last_bgr, part.last_r)     # draw the SAME perception used for control
             if writer is None:
                 H, W = frame.shape[:2]
                 writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*"mp4v"), 20, (W, H))
             writer.write(frame)
+        obs, reward, done, info = step(env, np.array([angle, throttle], dtype=np.float32))
+        survived += 1
         if done:                                        # left track / timed out
             episodes += 1
             print(f"  episode end @ step {step_i} (survived {survived} steps)")
@@ -142,7 +149,9 @@ def main():
     if writer is not None:
         writer.release(); print(f"wrote {a.record}")
     fps = a.steps / (time.time() - t0)
-    print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz")
+    sm = float(np.std(np.diff(steers))) if len(steers) > 2 else 0.0   # weave: std of frame-to-frame Δsteer
+    print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz "
+          f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}")
 
 
 if __name__ == "__main__":

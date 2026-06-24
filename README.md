@@ -83,8 +83,12 @@ python drive_gym.py --profile calib_sim.json --env donkey-generated-track-v0 \
 | old-car | dark mat, light floor | defaults |
 
 ## Result
-generated_track, constant throttle 0.2, image-only: **1 reset in 1200 steps, 1063 steps continuous
-(~53 s, full lap+)** with `--weight ground --steer-gain 3.0`.
+generated_track, image-only, `--weight ground --steer-gain 3.0 --const-throttle 0.17`:
+**1 reset in 1400 steps, ~858 steps continuous (~43 s)**, steer smoothness (std Δsteer) ≈ 0.055.
+
+Anti-oscillation knobs (optional): `--deadband` (ignore tiny heading errors → no weave on straights),
+`--steer-damp` (PD damping), lower `--ema`/throttle for smoother/slower. In practice the dominant weave
+came from a perceive-twice-per-step recording bug (now fixed); the plain baseline drives smoothly.
 
 ## Constraints (by design)
 - **No NN, no training** — purely geometric/classical computation.

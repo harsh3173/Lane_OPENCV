@@ -35,6 +35,7 @@ class RayPilotPart:
             return self.last
         bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
         r = self.pilot.perceive(bgr)
+        self.last_r, self.last_bgr = r, bgr          # for the recorder (perceive ONCE per step)
         angle = float(np.clip(r["steer"], -1.0, 1.0))
         if self.const_throttle is not None:                       # steering-calibration mode: always move
             throttle = float(self.const_throttle)
