@@ -65,8 +65,8 @@ class PhysicalRayCar:
             print("[INFO] Binding PCA9685 (steering ch14, throttle ch1)...")
             self.steering = PCA9685(channel=14, busnum=1)
             self.throttle = PCA9685(channel=1, busnum=1)
-            print("[INFO] Initializing PiCamera (128x120)...")
-            self.camera = PiCamera(image_w=128, image_h=120)
+            print("[INFO] Initializing PiCamera (160x120)...")
+            self.camera = PiCamera(image_w=160, image_h=120)
             time.sleep(2)
             print("[OK] Systems nominal.\n")
         except Exception as e:
