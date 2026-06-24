@@ -3,17 +3,32 @@
 Porting `ray_mask.py` (radial free-space ray-cast) from offline tub analysis into a live, image-only
 autonomous driving controller. No CTE/telemetry is ever used (see memory: no-cte-reward).
 
-## Baseline (where we are)
-- `ray_mask.py`: rays fan from bottom-centre, stop at white lines / colour edges; **global colour
-  calibration** (fixed track ref → off-track collapses) + **local-edge stop** + **horizon cap**.
-- Validated offline on recorded tubs: sim road, old-car mat, warehouse floor (per-domain params).
-- Output today: drivable mask + ray endpoints + off-track flag. Image-only.
-- Known limit: the fixed-origin symmetric fan can't fully wrap a *sharp* curve in the **mask** — but a
-  free-space-**direction** controller can still steer through it (control needs a heading, not a perfect mask).
+## STATUS (updated)
+**Phases 0–2 DONE — the pilot drives the DonkeyCar sim `generated_track` closed-loop, image-only.**
+Latest run: **0 resets / 1200 steps, 1174 steps continuous (~59 s)**, steer smoothness std(Δsteer) ≈
+0.045, ~20 Hz. Classical, no NN, no CTE/reward (audited & enforced in code).
+
+Pieces in place:
+- `ray_mask.py` — rays from bottom-centre stop at white lines (relative-bright) / colour edges /
+  local edges; **global colour calibration** (off-track ⇒ rays collapse) + **horizon cap** + **yellow-pass**
+  (yellow centre line is drivable). Validated on sim road, old-car mat, warehouse floor.
+- `ray_pilot.py` — `RayPilot.perceive → {mask, steer, throttle, offtrack, coverage}`; free-space-heading
+  steering (`--weight ground` perspective option), EMA + optional deadband/PD-damp; off-track hysteresis
+  + hold-steer-on-collapse; calibration profiles; overlay with persistent ON/OFF-TRACK flag.
+- `donkey_part.py` / `drive_gym.py` — DonkeyCar Part + gymnasium closed-loop driver with **live startup
+  calibration** (creep, sample real road, lock ref), const-throttle mode, `std Δsteer` metric.
+
+Best config: `--weight ground --steer-gain 3.0 --const-throttle 0.17 --offtrack-cov 0.10`.
+
+Known limit: the fixed-origin symmetric fan can't fully wrap a *sharp* curve in the **mask** — handled
+adequately by the free-space-direction controller, but the mid-field/look-ahead weighting refinement
+(below) is the remaining lever.
 
 ---
 
-## Phase 0 — Core perception+control module (offline)
+## Phase 0 — Core perception+control module (offline) ✅ DONE
+45 FPS / 22 ms per frame; free-space-heading steering validated by steer-arrow overlay (correct on
+straights). Perspective-weighted (`ground`) heading added per the far-rays-reach-farther insight.
 **Goal:** turn the mask into a (steer, throttle) command in a fast, reusable, dependency-light module.
 - Extract `ray_perception(image, cfg) -> {mask, endpoints, offtrack, steer, throttle}` (drop matplotlib/CLI/video).
 - **Steering law** (pick by experiment): free-space *balance* (left vs right free area) or longest-free-ray
@@ -24,24 +39,30 @@ autonomous driving controller. No CTE/telemetry is ever used (see memory: no-cte
 - **Perf:** profile the ray loop; target <30–50 ms/frame on dev. Lever: fewer rays, vectorise the march.
 - **DoD:** steer arrow follows the road on sim+warehouse tub videos; meets FPS target.
 
-## Phase 1 — Live calibration
+## Phase 1 — Live calibration ✅ DONE
+`drive_gym` creeps forward at start, samples the live road, locks the global ref (matched the
+recorded ref ≈ LAB(166,129,134)). Calibration profiles save/load (`--save-profile`/`--profile`).
 **Goal:** obtain the fixed track reference without a pre-recorded run.
 - Startup calibration: roll/drive a few seconds on-track, compute + lock the global ref (a "calibrate" action).
 - Per-environment config (sim / warehouse / real): thresholds, horizon, fan span (a0/a1), ref.
 - Drift handling: manual re-calibrate command; optional slow adaptive update while confidently on-track.
 - **DoD:** one-command calibration yields a working ref in a fresh environment.
 
-## Phase 2 — DonkeyCar sim integration (closed loop)
-**Goal:** drive autonomously in donkey-gym.
-- Implement a DonkeyCar **Part** `RayPilot` (camera img → angle/throttle), or a donkey-gym control loop.
-- Wire off-track → safe behaviour (cut throttle / stop / simple recovery).
-- Closed-loop tune steering gain, look-ahead (seed-y / horizon), throttle in the sim.
-- Metrics: laps completed, % time off-track, steering smoothness, avg speed.
-- **DoD:** completes laps on `generated_track` in donkey-gym without leaving the road.
+## Phase 2 — DonkeyCar sim integration (closed loop) ✅ DONE
+Drives `generated_track` without leaving the road (0 resets / 1200 steps in the best run). Steering
+calibrated in-loop: `ground` weight gain 3.0 beat 1.6 (11→1 reset) and pixel (weaved). **Oscillation
+resolved** — root cause was a perceive-twice-per-step recording bug (now perceive once); plain baseline
+is smooth (std Δsteer ≈ 0.045), optional deadband/PD-damp available but not needed. Off-track flag
+shown live + threshold fixed (grass ~8% vs on-track ~16–18% ⇒ `--offtrack-cov 0.10`).
+
+## Phase 2b — Throttle scheduling (NEXT)
+Restore clearance-scaled throttle (currently constant 0.17): faster on straights, slow into curves
+(scale by forward clearance / |steer|). Keep survival + smoothness as the bar.
 
 ## Phase 3 — Robustness in sim
-- Sharp curves: confirm the free-space controller handles them despite the mask limit; if not, adapt the
-  aim (steer toward longest-free-ray) or shift the ray origin.
+- Sharp curves: the residual understeer is the far-ray-dilutes-the-turn effect → add **mid-field /
+  look-ahead-capped weighting** (weight by ground distance but cap the look-ahead so distant rays
+  don't wash out the near road direction). This is the main remaining steering refinement.
 - Obstacles (cones): already stop rays; add an avoidance bias (steer away from near stops).
 - Generalisation: run multiple sim tracks; verify calibration + thresholds transfer.
 - Recovery: from off-track / near-wall states.
@@ -73,5 +94,5 @@ autonomous driving controller. No CTE/telemetry is ever used (see memory: no-cte
 4. **Sim→real gap** → expect a dedicated real recal + tuning pass; FOV/exposure differences.
 
 ## Suggested order
-Phase 0 (control law + speed) → Phase 2 (sim closed loop) → Phase 1 hardens calibration as you go →
-Phase 3 (sim robustness) → Phase 4 (real). Phase 0's steering law is the single highest-value next step.
+✅ Phase 0 → ✅ Phase 1 → ✅ Phase 2 (closed loop, drives the track) → **Phase 2b throttle scheduling
+(next)** → Phase 3 (sharp-curve mid-field weighting, multi-track, recovery) → Phase 4 (real car).
