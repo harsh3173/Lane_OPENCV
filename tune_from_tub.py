@@ -26,8 +26,8 @@ import os
 import cv2
 import numpy as np
 
-from ray_mask import calibrate
-from ray_pilot import RayPilot
+from raypilot.ray_mask import calibrate
+from raypilot.pilot import RayPilot
 
 
 def load_tub(tub):

@@ -6,16 +6,19 @@ bottom (left-mid / centre / right-mid) each cast their own fan; the UNION's conn
 the distinct drivable segments. Cast with `--no-yellow-pass` so the yellow centre line is a BOUNDARY
 → left/right lanes fall into separate components → coloured as separate lanes.
 
-    .venv/bin/python multi_ray.py --img-dir tub_generated_track --n 6 --out multi_preview.png
-    .venv/bin/python multi_ray.py --img-dir tub_old_car/images --video --vid-out multi_oldcar.mp4
+    .venv/bin/python experiments/multi_ray.py --img-dir tub_generated_track --n 6 --out multi_preview.png
+    .venv/bin/python experiments/multi_ray.py --img-dir tub_old_car/images --video --vid-out multi_oldcar.mp4
 """
 import argparse
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root -> import raypilot
 
 import cv2
 import numpy as np
 
-from ray_mask import calibrate, seed_ref, list_imgs, numeric_key   # read-only reuse
+from raypilot.ray_mask import calibrate, seed_ref, list_imgs, numeric_key   # read-only reuse
 
 SEG_COLORS = [(0, 255, 0), (255, 80, 80), (0, 180, 255), (255, 0, 255), (0, 255, 255), (160, 120, 255)]
 

@@ -65,8 +65,16 @@ Restore clearance-scaled throttle (currently constant 0.17): faster on straights
   don't wash out the near road direction). This is the main remaining steering refinement.
 - Obstacles (cones): already stop rays; add an avoidance bias (steer away from near stops).
 - Generalisation: run multiple sim tracks; verify calibration + thresholds transfer.
-- Recovery: from off-track / near-wall states.
+- Recovery: 🚧 `raypilot/recovery.py` `RecoveryController` built — detects the coverage collapse EARLY
+  (`warn_cov`), slows, then PULSED reverse with steer HELD at last-good (option-1 retrace) until the
+  track is re-acquired (`recover_cov`, debounced); `max_reverse` → STUCK safety stop. Wired into
+  `drive_gym.py` (`--recovery` on by default, `--warn-cov/--recover-cov/--reverse-throttle/--reverse-steer`).
+  Sim-focused for now; the real-car ESC reverse sequence is deferred. **Pending: closed-loop sim test.**
 - **DoD:** robust laps across several sim tracks with recovery.
+
+> Note: codebase refactored into a `raypilot/` package (perception `ray_mask`, control `pilot`,
+> `recovery`, `donkey_part`) + root entry scripts (`drive_gym`, `drive_physical_raycast`,
+> `tune_from_tub`, `render_overlay`); `experiments/` and `legacy/` split out.
 
 ## Phase 4 — Real-car port — 🚧 DRIVER BUILT, pending on-Pi field test
 **Driver done:** `drive_physical_raycast.py` adapts a proven TFLite physical scaffold (PiCamera

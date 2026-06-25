@@ -49,6 +49,16 @@ def parse_args():
     p.add_argument("--stop-offtrack", dest="stop_offtrack", action="store_true", default=True,
                    help="cut throttle when off-track (default); --no-stop-offtrack creeps through instead")
     p.add_argument("--no-stop-offtrack", dest="stop_offtrack", action="store_false")
+    # --- off-track recovery (detect early -> slow -> hold-steer reverse until re-acquired) ---
+    p.add_argument("--recovery", dest="recovery", action="store_true", default=True,
+                   help="enable the reverse-recovery state machine (default on)")
+    p.add_argument("--no-recovery", dest="recovery", action="store_false")
+    p.add_argument("--warn-cov", type=float, default=0.13, help="coverage below this -> SLOW (early caution)")
+    p.add_argument("--recover-cov", type=float, default=0.15, help="coverage above this (sustained) -> resume forward")
+    p.add_argument("--reverse-throttle", type=float, default=-0.30, help="throttle while backing up (negative)")
+    p.add_argument("--max-reverse", type=int, default=120, help="max reverse frames before STUCK (safety cap)")
+    p.add_argument("--reverse-steer", choices=["hold", "mirror", "straight"], default="hold",
+                   help="steer while reversing: hold last-good (retrace), mirror, or straight")
     p.add_argument("--sim-path",
                    default=os.environ.get("DONKEY_SIM_PATH",
                        "/Users/harshwadhawe/Downloads/DonkeySimMac/donkey_sim.app/Contents/MacOS/donkey_sim"),
@@ -56,6 +66,8 @@ def parse_args():
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=9091)
     p.add_argument("--record", default=None, help="optional mp4 of the camera + overlay")
+    p.add_argument("--dump-frames", default=None, help="dir: save RAW camera frames (no overlay) here for offline threshold tuning")
+    p.add_argument("--dump-stride", type=int, default=2, help="save every Nth frame when --dump-frames")
     return p.parse_args()
 
 
@@ -76,8 +88,9 @@ def main():
         return
 
     import cv2
-    from donkey_part import RayPilotPart
-    from ray_pilot import draw
+    from raypilot.donkey_part import RayPilotPart
+    from raypilot.pilot import draw
+    from raypilot.recovery import RecoveryController
 
     part = RayPilotPart(a.profile, throttle_scale=a.throttle_scale, min_throttle=a.min_throttle,
                         stop_on_offtrack=a.stop_offtrack, const_throttle=a.const_throttle)
@@ -127,7 +140,7 @@ def main():
 
     # ---- Phase 1 live calibration: creep forward, sample the LIVE road colour, lock the ref ----
     if a.live_calib:
-        from ray_mask import seed_ref
+        from raypilot.ray_mask import seed_ref
         refs = []
         for i in range(a.warmup_steps):
             obs, done = step(env, np.array([0.0, a.creep_throttle], np.float32))
@@ -143,13 +156,33 @@ def main():
             print(f"live calibrated ref LAB({rf[0]:.0f},{rf[1]:.0f},{rf[2]:.0f}) "
                   f"V{part.pilot.ref_v:.0f} (from {len(refs)} live frames)")
 
+    recov = None
+    if a.recovery:
+        recov = RecoveryController(warn_cov=a.warn_cov, off_cov=part.pilot.offtrack_cov,
+                                   recover_cov=a.recover_cov, reverse_throttle=a.reverse_throttle,
+                                   max_reverse=a.max_reverse, reverse_steer_mode=a.reverse_steer)
+        print(f"recovery ON: warn<{a.warn_cov} off<{part.pilot.offtrack_cov} recover>{a.recover_cov} "
+              f"reverse_thr={a.reverse_throttle} steer={a.reverse_steer}")
+
+    if a.dump_frames:
+        os.makedirs(a.dump_frames, exist_ok=True)
+
     writer = None
-    survived, episodes = 0, 0
-    t0, steers = time.time(), []
+    survived, episodes, dumped = 0, 0, 0
+    t0, steers, rev_steps = time.time(), [], 0
     for step_i in range(a.steps):
         angle, throttle = part.run(obs)                 # perceives obs ONCE (stored on the part)
+        if a.dump_frames and step_i % a.dump_stride == 0 and getattr(part, "last_bgr", None) is not None:
+            cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), part.last_bgr)  # RAW, no overlay
+            dumped += 1
+        rstate = "DRIVE"
+        if recov is not None and getattr(part, "last_r", None) is not None:
+            angle, throttle, rstate = recov.step(part.last_r["coverage"], angle, throttle)
+            if rstate in ("REVERSE", "STUCK"):
+                rev_steps += 1
         steers.append(angle)
         if a.record and getattr(part, "last_r", None) is not None:
+            part.last_r["recovery"] = rstate             # surface state on the overlay
             frame = draw(part.last_bgr, part.last_r)     # draw the SAME perception used for control
             if writer is None:
                 H, W = frame.shape[:2]
@@ -161,13 +194,18 @@ def main():
             episodes += 1
             print(f"  episode end @ step {step_i} (survived {survived} steps)")
             obs = reset(env); survived = 0
+            if recov is not None:
+                recov.reset()                            # fresh state machine for the new episode
     env.close()
     if writer is not None:
         writer.release(); print(f"wrote {a.record}")
+    if a.dump_frames:
+        print(f"dumped {dumped} raw frames -> {a.dump_frames}/")
     fps = a.steps / (time.time() - t0)
     sm = float(np.std(np.diff(steers))) if len(steers) > 2 else 0.0   # weave: std of frame-to-frame Δsteer
     print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz "
-          f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}")
+          f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}"
+          + (f" | recovery active {rev_steps} steps" if recov is not None else ""))
 
 
 if __name__ == "__main__":

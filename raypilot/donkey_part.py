@@ -2,7 +2,7 @@
 
 Drop into a DonkeyCar vehicle assembly:
 
-    from donkey_part import RayPilotPart
+    from raypilot import RayPilotPart
     V.add(RayPilotPart("calib_sim.json"), inputs=["cam/image_array"], outputs=["angle", "throttle"])
 
 The Part is duck-typed (no donkeycar import), so it also runs standalone / in the gym loop. DonkeyCar
@@ -11,7 +11,7 @@ hands camera frames as RGB numpy; ray_mask works in BGR, so we convert. Off-trac
 import cv2
 import numpy as np
 
-from ray_pilot import RayPilot
+from .pilot import RayPilot
 
 
 class RayPilotPart:

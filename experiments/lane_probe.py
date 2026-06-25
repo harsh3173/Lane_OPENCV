@@ -6,17 +6,21 @@ against the centre-lane reference:
 
 Standalone experiment; does NOT modify ray_mask.py / ray_pilot.py / multi_ray.py.
 
-    .venv/bin/python lane_probe.py --img-dir tub_generated_track --n 6 --out probe_preview.png
-    .venv/bin/python lane_probe.py --img-dir tub_old_car/images --video --vid-out probe_oldcar.mp4
+    .venv/bin/python experiments/lane_probe.py --img-dir tub_generated_track --n 6 --out probe_preview.png
+    .venv/bin/python experiments/lane_probe.py --img-dir tub_old_car/images --video --vid-out probe_oldcar.mp4
 """
 import argparse
 import math
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root -> import raypilot
 
 import cv2
 import numpy as np
 
-from ray_mask import calibrate, list_imgs, numeric_key   # read-only reuse
-from multi_ray import cast_fan, fan_mask                 # read-only reuse
+from raypilot.ray_mask import calibrate, list_imgs, numeric_key   # read-only reuse
+from multi_ray import cast_fan, fan_mask                           # sibling experiment
 
 CENTER_COL = (0, 255, 0)
 LANE_COLS = [(255, 120, 0), (0, 200, 255)]               # detected adjacent lanes (L, R)

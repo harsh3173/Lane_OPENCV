@@ -6,19 +6,16 @@ Wraps the ray-cast core (ray_mask.cast_rays) into a per-frame controller:
 Steering = FREE-SPACE HEADING: each ray's length (free distance) weights its angle, so the chosen
 heading points where the track is most open -- this follows curves even when the fan mask doesn't
 wrap them. Throttle scales with forward clearance and goes to 0 off-track. Steer/throttle are EMA-
-smoothed. Validate offline with `--video`: the arrow should track the road.
+smoothed.
 
-    .venv/bin/python ray_pilot.py --img-dir tub_generated_track --white-margin 90 --color-thr 40 \
-        --wl 0.1 --horizon 0.35 --edge-thr 22 --video --vid-out pilot_sim.mp4
+Library module (no CLI). The offline video/preview tool lives in render_overlay.py.
 """
-import argparse
 import json
-import time
 
 import cv2
 import numpy as np
 
-from ray_mask import cast_rays, calibrate, list_imgs, numeric_key
+from .ray_mask import cast_rays
 
 
 class RayPilot:
@@ -148,82 +145,10 @@ def draw(bgr, r, scale=3):
     status = "OFF-TRACK" if off else "ON-TRACK"
     scol = (0, 0, 255) if off else (0, 220, 0)
     cv2.putText(canvas, f"{status}  cov {r['coverage'] * 100:.0f}%", (8, 46), f, 0.6, scol, 2)
+    # line 3 (optional): recovery state machine status (DRIVE/SLOW/REVERSE/STUCK)
+    rs = r.get("recovery")
+    if rs and rs != "DRIVE":
+        rcol = {"SLOW": (0, 200, 255), "REVERSE": (0, 0, 255), "STUCK": (0, 0, 200)}.get(rs, (255, 255, 255))
+        cv2.putText(canvas, f"RECOVERY: {rs}", (8, 70), f, 0.6, rcol, 2)
     return canvas
 
-
-def parse_args():
-    p = argparse.ArgumentParser(description="Phase-0 ray pilot: perception + steering")
-    p.add_argument("--img-dir", required=True)
-    p.add_argument("--n-rays", type=int, default=80)
-    p.add_argument("--a0", type=float, default=8)
-    p.add_argument("--a1", type=float, default=172)
-    p.add_argument("--seed-y", type=float, default=0.85)
-    p.add_argument("--white-margin", type=int, default=45)
-    p.add_argument("--white-s", type=int, default=60)
-    p.add_argument("--color-thr", type=float, default=40)
-    p.add_argument("--wl", type=float, default=0.15)
-    p.add_argument("--horizon", type=float, default=0.0)
-    p.add_argument("--edge-thr", type=float, default=22)
-    p.add_argument("--edge-window", type=int, default=4)
-    p.add_argument("--weight", choices=["pixel", "ground"], default="pixel",
-                   help="heading weight: pixel length, or perspective-corrected ground distance cleared")
-    p.add_argument("--persp-horizon", type=float, default=0.35, help="ground weight: perspective horizon y-fraction")
-    p.add_argument("--min-gap-frac", type=float, default=0.05, help="ground weight: caps weight near the horizon")
-    p.add_argument("--steer-gain", type=float, default=1.6)
-    p.add_argument("--base-throttle", type=float, default=0.5)
-    p.add_argument("--ema", type=float, default=0.4)
-    p.add_argument("--offtrack-cov", type=float, default=0.03)
-    p.add_argument("--calib-sample", type=int, default=150)
-    p.add_argument("--profile", default=None, help="load a saved calibration profile (skip calibrate)")
-    p.add_argument("--save-profile", default=None, help="write the calibrated profile to this path")
-    p.add_argument("--max-frames", type=int, default=1500)
-    p.add_argument("--video", action="store_true")
-    p.add_argument("--vid-out", default="pilot_overlay.mp4")
-    p.add_argument("--fps", type=int, default=15)
-    return p.parse_args()
-
-
-def main():
-    a = parse_args()
-    paths = sorted(list_imgs(a.img_dir), key=numeric_key)
-    if not paths:
-        print("no images"); return
-
-    if a.profile:
-        pilot = RayPilot.from_profile(a.profile)
-        print(f"loaded profile {a.profile} | ref V{pilot.ref_v:.0f} weight={pilot.weight}")
-    else:
-        ref, ref_v = calibrate(paths, a.calib_sample)
-        print(f"global ref LAB({ref[0]:.0f},{ref[1]:.0f},{ref[2]:.0f}) V{ref_v:.0f}")
-        ray_kw = dict(seed_y=a.seed_y, n_rays=a.n_rays, a0=a.a0, a1=a.a1,
-                      white_margin=a.white_margin, white_s=a.white_s, color_thr=a.color_thr,
-                      wl=a.wl, horizon=a.horizon, edge_thr=a.edge_thr, edge_window=a.edge_window)
-        pilot = RayPilot(ref, ref_v, ray_kw, a.steer_gain, a.base_throttle, a.ema, a.offtrack_cov,
-                         weight=a.weight, persp_horizon=a.persp_horizon, min_gap_frac=a.min_gap_frac)
-        if a.save_profile:
-            print(f"saved profile -> {pilot.save_profile(a.save_profile)}")
-
-    seq = paths[:a.max_frames] if a.max_frames else paths
-    writer = None
-    if a.video:
-        H, W = cv2.imread(seq[0]).shape[:2]
-        writer = cv2.VideoWriter(a.vid_out, cv2.VideoWriter_fourcc(*"mp4v"), a.fps, (W * 3, H * 3))
-
-    t0, n_off, steer_abs = time.time(), 0, []
-    for p in seq:
-        bgr = cv2.imread(p)
-        r = pilot.perceive(bgr)
-        n_off += r["offtrack"]; steer_abs.append(abs(r["steer"]))
-        if writer is not None:
-            writer.write(draw(bgr, r))
-    dt = time.time() - t0
-    if writer is not None:
-        writer.release(); print(f"wrote {a.vid_out}")
-    fps = len(seq) / dt
-    print(f"processed {len(seq)} frames in {dt:.1f}s -> {fps:.0f} FPS ({1000/fps:.1f} ms/frame, "
-          f"perception+control)")
-    print(f"off-track {n_off} ({100*n_off/len(seq):.1f}%) | mean |steer| {np.mean(steer_abs):.2f}")
-
-
-if __name__ == "__main__":
-    main()

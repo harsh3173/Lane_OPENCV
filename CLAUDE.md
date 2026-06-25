@@ -4,33 +4,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-A **VGG16-BN-encoder UNet** does binary lane segmentation on TuSimple. **Scripts are the primary
-workflow** (the notebook proved awkward to run); `lanenet.ipynb` is kept as a reference walkthrough
-of the same pipeline. This directory is not a git repository.
+The active project is a **classical, image-only, training-free ray-cast driving pilot** for a
+DonkeyCar (sim → real Pi 5). The original VGG16-BN-UNet TuSimple segmentation pipeline still lives in
+`legacy/` but is **not used** by the pilot. This directory IS a git repository (code only; tubs,
+datasets, videos, images, checkpoints are gitignored).
 
-## Scripts
+**Hard constraint:** never use the sim's CTE/reward (or the recorded steering column as a shortcut
+label) anywhere in the pilot — perception, control, calibration, or recovery. All signals are
+image-derived.
 
-Flat module layout (no package), all run via the venv:
+## Layout (package + entry-point scripts)
 
-- `common.py` — device select (MPS), ImageNet norm/`denorm`, `dice_loss`, `make_criterion` (BCE+Dice), `eval_metrics` (IoU/Dice).
-- `dataset.py` — `load_records`, `lane_mask` (polyline→binary mask), `TuSimpleLanes`, `build_train_val_loaders`.
-- `model.py` — `VGGUNet` (VGG16-BN features sliced at pool boundaries → UNet decoder; ~20M params).
-- `train.py` — entry point; argparse; checkpoints best val-Dice to `vgg_unet_lanenet.pt`.
-- `evaluate.py` — load checkpoint, score IoU/Dice on the test split.
-- `visualize.py` — headless (matplotlib `Agg`); saves input/GT/pred panels to a **PNG** (no GUI).
+Library logic is the `raypilot/` package; entry-point scripts stay at the repo root and run via the
+venv from the repo root (so `import raypilot...` resolves).
+
+- `raypilot/ray_mask.py` — perception core: `cast_rays` (radial free-space rays), `calibrate`,
+  `seed_ref`, `list_imgs`, `numeric_key`. Run-level global colour ref (off-track ⇒ rays collapse).
+- `raypilot/pilot.py` — `RayPilot.perceive(bgr) -> {mask, steer, throttle, offtrack, heading, coverage, ...}`
+  (free-space-heading steering, EMA, off-track hysteresis); `draw()` overlay; save/load profiles.
+- `raypilot/recovery.py` — `RecoveryController`: off-track recovery state machine
+  `DRIVE→SLOW→REVERSE→STUCK`. Detects the collapse early on `coverage`, slows, then PULSED reverse
+  with steer HELD at last-good (retrace) until the track is re-acquired. Image-only.
+- `raypilot/donkey_part.py` — `RayPilotPart` (duck-typed DonkeyCar Part; also used in the gym loop).
+
+Entry points (root):
+- `drive_gym.py` — closed-loop sim driver (gym_donkeycar); recovery wired in (`--recovery` on by default).
+- `drive_physical_raycast.py` — physical Pi driver (PCA9685 PWM, PiCamera, 3 s straight calibrate → drive).
+- `tune_from_tub.py` — calibrate steering gains vs recorded PS4 telemetry (scalars only; never read at drive time).
+- `render_overlay.py` — offline overlay video/preview on a folder of frames (was `ray_pilot.py --video`).
+
+Other dirs: `experiments/` (multi_ray, lane_probe — deferred), `legacy/` (the unused VGG-UNet pipeline).
 
 Typical commands:
 
 ```
-.venv/bin/python train.py --epochs 1 --max-samples 100   # fast MVP smoke run
-.venv/bin/python train.py --epochs 15 --max-samples 0     # full set (0 = no cap)
-.venv/bin/python evaluate.py --ckpt vgg_unet_lanenet.pt --max-samples 200
-.venv/bin/python visualize.py --ckpt vgg_unet_lanenet.pt --n 4 --out preds.png
+# sim closed loop with recovery (reverse on early off-track, hold-steer retrace):
+.venv/bin/python drive_gym.py --profile calib_sim.json --steps 2000 --warn-cov 0.13 --recover-cov 0.15
+# offline overlay video:
+.venv/bin/python render_overlay.py --img-dir tub_real/data/images --weight ground --steer-gain 3.4 \
+    --offtrack-cov 0.10 --video --vid-out pilot_real.mp4 --fps 20
+# calibrate gains vs PS4 tub:
+.venv/bin/python tune_from_tub.py --tub tub_real/data --out tune_real.png
 ```
 
-All knobs (img size, lane width, batch, lr, paths) are argparse flags — see `--help`. On this M1,
-pass `--num-workers 0` if dataloader workers act up. `visualize.py` writes a file rather than
-showing a window, so prefer it over notebook display when checking results.
+Legacy VGG-UNet pipeline (unused by the pilot) is run from within `legacy/` (flat intra-imports):
+`.venv/bin/python legacy/train.py --epochs 15 --max-samples 0`, etc. All knobs are argparse flags
+(`--help`); on this M1 pass `--num-workers 0` if dataloader workers act up.
 
 ## Environment (use this consistently)
 

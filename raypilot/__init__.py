@@ -1,0 +1,16 @@
+"""raypilot — classical, image-only ray-cast driving pilot (no NN, no CTE/reward).
+
+Public surface:
+    from raypilot import RayPilot, draw, RecoveryController, RayPilotPart
+    from raypilot.ray_mask import cast_rays, calibrate, seed_ref, list_imgs, numeric_key
+"""
+from .ray_mask import cast_rays, calibrate, seed_ref, list_imgs, numeric_key
+from .pilot import RayPilot, draw
+from .recovery import RecoveryController, DRIVE, SLOW, REVERSE, STUCK
+from .donkey_part import RayPilotPart
+
+__all__ = [
+    "RayPilot", "draw", "RecoveryController", "RayPilotPart",
+    "cast_rays", "calibrate", "seed_ref", "list_imgs", "numeric_key",
+    "DRIVE", "SLOW", "REVERSE", "STUCK",
+]

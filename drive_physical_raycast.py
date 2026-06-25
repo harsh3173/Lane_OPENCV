@@ -19,8 +19,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 from donkeycar.parts.actuator import PCA9685
 from donkeycar.parts.camera import PiCamera
 
-from ray_pilot import RayPilot
-from ray_mask import seed_ref
+from raypilot.pilot import RayPilot
+from raypilot.ray_mask import seed_ref
 
 # --- HARDWARE CONFIG (from your calibrated physical setup) ---
 STEERING_LEFT_PWM = 470          # steer = -1  (verify direction on your car; swap with RIGHT if reversed)
@@ -30,12 +30,12 @@ THROTTLE_STOPPED_PWM = 400
 THROTTLE_REVERSE_PWM = 320
 
 # --- DRIVING KNOBS ---
-STEERING_GAIN = 1.0              # final multiplier on the pilot's steer (raise if turns too wide)
-THROTTLE_BOOST = 1.0             # multiplier to overcome real-world friction
-CONST_THROTTLE = 0.20            # fixed throttle while driving (None -> use the pilot's clearance throttle)
+STEERING_GAIN = 1.25              # final multiplier on the pilot's steer (raise if turns too wide)
+THROTTLE_BOOST = 1.3             # multiplier to overcome real-world friction
+CONST_THROTTLE = 0.22            # fixed throttle while driving (None -> use the pilot's clearance throttle)
 STOP_ON_OFFTRACK = True          # cut throttle when off-track (safety)
 CALIB_SECONDS = 3.0              # straight-line calibration duration
-CALIB_THROTTLE = 0.18            # gentle forward throttle during calibration
+CALIB_THROTTLE = 0.20            # gentle forward throttle during calibration
 
 # --- PI PERFORMANCE ---
 # The 80-ray Python loop is the only real-time risk on a Pi 5. 40 rays keeps steering ~0.96
@@ -122,19 +122,41 @@ class PhysicalRayCar:
         finally:
             self.shutdown()
 
+    # def shutdown(self):
+    #     print("\n" + "=" * 50 + "\nSAFE SHUTDOWN\n" + "=" * 50)
+    #     if self.throttle:
+    #         try: self.throttle.run(THROTTLE_STOPPED_PWM)
+    #         except Exception: pass
+    #     if self.steering:
+    #         try: self.steering.run(STEER_CENTER_PWM)
+    #         except Exception: pass
+    #     if self.camera:
+    #         try: self.camera.shutdown()
+    #         except Exception: pass
+    #     print("[DONE] Car secured.")
     def shutdown(self):
-        print("\n" + "=" * 50 + "\nSAFE SHUTDOWN\n" + "=" * 50)
-        if self.throttle:
-            try: self.throttle.run(THROTTLE_STOPPED_PWM)
-            except Exception: pass
-        if self.steering:
-            try: self.steering.run(STEER_CENTER_PWM)
-            except Exception: pass
-        if self.camera:
-            try: self.camera.shutdown()
-            except Exception: pass
-        print("[DONE] Car secured.")
-
+            print("\n" + "=" * 50 + "\nSAFE SHUTDOWN\n" + "=" * 50)
+            
+            if self.throttle:
+                try: 
+                    self.throttle.run(THROTTLE_STOPPED_PWM)
+                    self.throttle.run(0)  # Kills the PWM signal completely
+                except Exception: 
+                    pass
+                    
+            if self.steering:
+                try: 
+                    self.steering.run(STEER_CENTER_PWM)
+                except Exception: 
+                    pass
+                    
+            if self.camera:
+                try: 
+                    self.camera.shutdown()
+                except Exception: 
+                    pass
+                    
+            print("[DONE] Car secured.")
 
 if __name__ == "__main__":
     car = PhysicalRayCar()
