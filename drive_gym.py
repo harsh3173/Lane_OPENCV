@@ -105,7 +105,7 @@ def main():
         agent = FlowPart(base.ref, base.ref_v, base.ray_kw,
                          const_throttle=(a.const_throttle if a.const_throttle is not None else 0.17),
                          stop_on_offtrack=a.stop_offtrack,
-                         steer_gain=(a.steer_gain if a.steer_gain is not None else 2.6),
+                         steer_gain=(a.steer_gain if a.steer_gain is not None else 3.4),  # validated ray-heading gain
                          ema=(a.ema if a.ema is not None else 0.4),
                          offtrack_cov=(a.offtrack_cov if a.offtrack_cov is not None else 0.10))
         calib_target, off_cov = agent.flow, agent.flow.offtrack_cov
