@@ -90,9 +90,13 @@ def parse_args():
     p.add_argument("--warn-cov", type=float, default=0.13, help="coverage below this -> SLOW (early caution)")
     p.add_argument("--recover-cov", type=float, default=0.15, help="coverage above this (sustained) -> resume forward")
     p.add_argument("--reverse-throttle", type=float, default=-0.30, help="throttle while backing up (negative)")
-    p.add_argument("--max-reverse", type=int, default=120, help="max reverse frames before STUCK (safety cap)")
     p.add_argument("--reverse-steer", choices=["hold", "mirror", "straight"], default="hold",
                    help="steer while reversing: hold last-good (retrace), mirror, or straight")
+    # time-based recovery sequencing (seconds; rate-independent via --control-hz)
+    p.add_argument("--offtrack-secs", type=float, default=1.5, help="off-track must persist this long before STOP+reverse")
+    p.add_argument("--stop-secs", type=float, default=0.4, help="full-halt duration before reversing")
+    p.add_argument("--max-reverse-secs", type=float, default=3.0, help="max time reversing before STUCK (safety cap)")
+    p.add_argument("--control-hz", type=float, default=20.0, help="control-loop rate, to convert the *-secs into frames")
     p.add_argument("--sim-path",
                    default=os.environ.get("DONKEY_SIM_PATH",
                        "/Users/harshwadhawe/Downloads/DonkeySimMac/donkey_sim.app/Contents/MacOS/donkey_sim"),
@@ -218,11 +222,13 @@ def main():
                       f"V{calib_target.ref_v:.0f} (from {len(refs)} live frames)")
 
         if a.recovery:
-            recov = RecoveryController(warn_cov=a.warn_cov, off_cov=off_cov,
-                                       recover_cov=a.recover_cov, reverse_throttle=a.reverse_throttle,
-                                       max_reverse=a.max_reverse, reverse_steer_mode=a.reverse_steer)
-            print(f"recovery ON: warn<{a.warn_cov} off<{off_cov} recover>{a.recover_cov} "
-                  f"reverse_thr={a.reverse_throttle} steer={a.reverse_steer}")
+            recov = RecoveryController(warn_cov=a.warn_cov, off_cov=off_cov, recover_cov=a.recover_cov,
+                                       reverse_throttle=a.reverse_throttle, control_hz=a.control_hz,
+                                       offtrack_secs=a.offtrack_secs, stop_secs=a.stop_secs,
+                                       max_reverse_secs=a.max_reverse_secs, reverse_steer_mode=a.reverse_steer)
+            print(f"recovery ON: confirm {a.offtrack_secs}s off<{off_cov} -> STOP {a.stop_secs}s -> reverse "
+                  f"(thr {a.reverse_throttle}, steer {a.reverse_steer}, max {a.max_reverse_secs}s) -> "
+                  f"recover>{a.recover_cov} | @{a.control_hz:.0f}Hz")
 
         if a.dump_frames:
             os.makedirs(a.dump_frames, exist_ok=True)

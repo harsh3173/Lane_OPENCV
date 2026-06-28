@@ -148,7 +148,8 @@ def draw(bgr, r, scale=3):
     # line 3 (optional): recovery state machine status (DRIVE/SLOW/REVERSE/STUCK)
     rs = r.get("recovery")
     if rs and rs != "DRIVE":
-        rcol = {"SLOW": (0, 200, 255), "REVERSE": (0, 0, 255), "STUCK": (0, 0, 200)}.get(rs, (255, 255, 255))
+        rcol = {"SLOW": (0, 200, 255), "STOP": (0, 165, 255), "REVERSE": (0, 0, 255),
+                "STUCK": (0, 0, 200)}.get(rs, (255, 255, 255))
         cv2.putText(canvas, f"RECOVERY: {rs}", (8, 70), f, 0.6, rcol, 2)
     return canvas
 
