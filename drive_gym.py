@@ -17,9 +17,38 @@ never sees it. The "steps survived" print is a sim-harness convenience derived f
 """
 import argparse
 import os
+import signal
+import subprocess
 import time
 
 import numpy as np
+
+
+class SimTimeout(Exception):
+    """Raised when a sim step/reset blocks longer than --sim-timeout (the sim died or hung)."""
+
+
+def _on_alarm(signum, frame):
+    raise SimTimeout()
+
+
+def cleanup_stale(verbose=True):
+    """Kill leftover donkey_sim binaries and other hung drive_gym.py clients (never ourselves), so a
+    fresh run gets a clean sim + free port instead of attaching to / fighting a zombie."""
+    me = os.getpid()
+    subprocess.run(["pkill", "-f", "donkey_sim"], capture_output=True)
+    try:
+        out = subprocess.run(["pgrep", "-f", "drive_gym.py"], capture_output=True, text=True).stdout
+        killed = [pid for pid in out.split() if pid and int(pid) != me]
+        for pid in killed:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except Exception:
+                pass
+        if verbose and killed:
+            print(f"[cleanup] killed stale drive_gym pid(s): {', '.join(killed)}")
+    except Exception:
+        pass
 
 
 def parse_args():
@@ -73,6 +102,10 @@ def parse_args():
     p.add_argument("--record", default=None, help="optional mp4 of the camera + overlay")
     p.add_argument("--dump-frames", default=None, help="dir: save RAW camera frames (no overlay) here for offline threshold tuning")
     p.add_argument("--dump-stride", type=int, default=2, help="save every Nth frame when --dump-frames")
+    p.add_argument("--no-cleanup", dest="cleanup", action="store_false", default=True,
+                   help="skip killing stale donkey_sim / drive_gym processes before launch")
+    p.add_argument("--sim-timeout", type=int, default=15,
+                   help="abort cleanly if a sim step blocks longer than this many seconds (0 = no watchdog)")
     return p.parse_args()
 
 
@@ -130,17 +163,26 @@ def main():
         calib_target, off_cov = p, p.offtrack_cov
         print(f"steering: RAY base | gain={p.steer_gain} weight={p.weight} ema={p.ema} "
               f"shadow_pass={p.ray_kw.get('shadow_pass')} trim={p.steer_trim} gainL={p.gain_left} gainR={p.gain_right}")
+    if a.cleanup:                                       # clear zombie sim/clients so we get a clean port
+        cleanup_stale()
+    if a.sim_timeout > 0:                               # watchdog: a dead/hung sim can't freeze us
+        signal.signal(signal.SIGALRM, _on_alarm)
+
     conf = {"host": a.host, "port": a.port, "car_name": "ray-pilot"}
     if a.sim_path != "remote":                          # else: attach to an already-running sim
         conf["exe_path"] = a.sim_path
     env = gym.make(a.env, conf=conf)
 
     def reset(e):                                        # gym (obs) vs gymnasium (obs, info)
+        signal.alarm(a.sim_timeout if a.sim_timeout > 0 else 0)
         out = e.reset()
+        signal.alarm(0)
         return out[0] if isinstance(out, tuple) else out
 
     def step(e, action):                                # -> (obs, done). reward + info are
+        signal.alarm(a.sim_timeout if a.sim_timeout > 0 else 0)
         res = e.step(action)                            # DISCARDED on purpose: no telemetry (cte/
+        signal.alarm(0)
         if len(res) == 5:                               # reward) is ever read. `done` is used only
             obs, _, term, trunc, _ = res                # to reset the car in the sim harness, never
             return obs, bool(term or trunc)             # for perception/control (the real car never
@@ -151,76 +193,85 @@ def main():
         arr = np.asarray(obs[0] if isinstance(obs, (tuple, list)) else obs)
         return arr if arr.ndim == 3 and arr.shape[2] == 3 else None
 
-    obs = reset(env)
-
-    # ---- Phase 1 live calibration: creep forward, sample the LIVE road colour, lock the ref ----
-    if a.live_calib:
-        from raypilot.ray_mask import seed_ref
-        refs = []
-        for i in range(a.warmup_steps):
-            obs, done = step(env, np.array([0.0, a.creep_throttle], np.float32))
-            img = get_img(obs)
-            if img is not None and i >= a.warmup_steps // 2:   # second half: car is on clean road
-                refs.append(seed_ref(cv2.cvtColor(img, cv2.COLOR_RGB2BGR)))
-            if done:
-                obs = reset(env)
-        if refs:
-            calib_target.ref = np.median(np.array([r for r, _ in refs]), axis=0)
-            calib_target.ref_v = float(np.median([v for _, v in refs]))
-            rf = calib_target.ref
-            print(f"live calibrated ref LAB({rf[0]:.0f},{rf[1]:.0f},{rf[2]:.0f}) "
-                  f"V{calib_target.ref_v:.0f} (from {len(refs)} live frames)")
-
-    recov = None
-    if a.recovery:
-        recov = RecoveryController(warn_cov=a.warn_cov, off_cov=off_cov,
-                                   recover_cov=a.recover_cov, reverse_throttle=a.reverse_throttle,
-                                   max_reverse=a.max_reverse, reverse_steer_mode=a.reverse_steer)
-        print(f"recovery ON: warn<{a.warn_cov} off<{off_cov} recover>{a.recover_cov} "
-              f"reverse_thr={a.reverse_throttle} steer={a.reverse_steer}")
-
-    if a.dump_frames:
-        os.makedirs(a.dump_frames, exist_ok=True)
-
-    writer = None
+    writer = recov = None
     survived, episodes, dumped = 0, 0, 0
     t0, steers, rev_steps = time.time(), [], 0
-    for step_i in range(a.steps):
-        angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
-        if a.dump_frames and step_i % a.dump_stride == 0 and getattr(agent, "last_bgr", None) is not None:
-            cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), agent.last_bgr)  # RAW, no overlay
-            dumped += 1
-        rstate = "DRIVE"
-        if recov is not None and getattr(agent, "last_r", None) is not None:
-            angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
-            if rstate in ("REVERSE", "STUCK"):
-                rev_steps += 1
-        steers.append(angle)
-        if a.record and getattr(agent, "last_r", None) is not None:
-            agent.last_r["recovery"] = rstate            # surface state on the overlay (ray draw uses it)
-            frame = draw_fn(agent.last_bgr, agent.last_r)   # draw the SAME perception used for control
-            if writer is None:
-                H, W = frame.shape[:2]
-                writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*"mp4v"), 20, (W, H))
-            writer.write(frame)
-        obs, done = step(env, np.array([angle, throttle], dtype=np.float32))
-        survived += 1
-        if done:                                        # left track / timed out
-            episodes += 1
-            print(f"  episode end @ step {step_i} (survived {survived} steps)")
-            obs = reset(env); survived = 0
-            if recov is not None:
-                recov.reset()                            # fresh state machine for the new episode
-    env.close()
-    if writer is not None:
-        writer.release(); print(f"wrote {a.record}")
-    if a.dump_frames:
-        print(f"dumped {dumped} raw frames -> {a.dump_frames}/")
-    fps = a.steps / (time.time() - t0)
-    sm = float(np.std(np.diff(steers))) if len(steers) > 2 else 0.0   # weave: std of frame-to-frame Δsteer
-    print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz "
-          f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}"
-          + (f" | recovery active {rev_steps} steps" if recov is not None else ""))
+    try:
+        obs = reset(env)
+
+        # ---- Phase 1 live calibration: creep forward, sample the LIVE road colour, lock the ref ----
+        if a.live_calib:
+            from raypilot.ray_mask import seed_ref
+            refs = []
+            for i in range(a.warmup_steps):
+                obs, done = step(env, np.array([0.0, a.creep_throttle], np.float32))
+                img = get_img(obs)
+                if img is not None and i >= a.warmup_steps // 2:   # second half: car is on clean road
+                    refs.append(seed_ref(cv2.cvtColor(img, cv2.COLOR_RGB2BGR)))
+                if done:
+                    obs = reset(env)
+            if refs:
+                calib_target.ref = np.median(np.array([r for r, _ in refs]), axis=0)
+                calib_target.ref_v = float(np.median([v for _, v in refs]))
+                rf = calib_target.ref
+                print(f"live calibrated ref LAB({rf[0]:.0f},{rf[1]:.0f},{rf[2]:.0f}) "
+                      f"V{calib_target.ref_v:.0f} (from {len(refs)} live frames)")
+
+        if a.recovery:
+            recov = RecoveryController(warn_cov=a.warn_cov, off_cov=off_cov,
+                                       recover_cov=a.recover_cov, reverse_throttle=a.reverse_throttle,
+                                       max_reverse=a.max_reverse, reverse_steer_mode=a.reverse_steer)
+            print(f"recovery ON: warn<{a.warn_cov} off<{off_cov} recover>{a.recover_cov} "
+                  f"reverse_thr={a.reverse_throttle} steer={a.reverse_steer}")
+
+        if a.dump_frames:
+            os.makedirs(a.dump_frames, exist_ok=True)
+
+        for step_i in range(a.steps):
+            angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
+            if a.dump_frames and step_i % a.dump_stride == 0 and getattr(agent, "last_bgr", None) is not None:
+                cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), agent.last_bgr)  # RAW, no overlay
+                dumped += 1
+            rstate = "DRIVE"
+            if recov is not None and getattr(agent, "last_r", None) is not None:
+                angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
+                if rstate in ("REVERSE", "STUCK"):
+                    rev_steps += 1
+            steers.append(angle)
+            if a.record and getattr(agent, "last_r", None) is not None:
+                agent.last_r["recovery"] = rstate            # surface state on the overlay (ray draw uses it)
+                frame = draw_fn(agent.last_bgr, agent.last_r)   # draw the SAME perception used for control
+                if writer is None:
+                    H, W = frame.shape[:2]
+                    writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*"mp4v"), 20, (W, H))
+                writer.write(frame)
+            obs, done = step(env, np.array([angle, throttle], dtype=np.float32))
+            survived += 1
+            if done:                                        # left track / timed out
+                episodes += 1
+                print(f"  episode end @ step {step_i} (survived {survived} steps)")
+                obs = reset(env); survived = 0
+                if recov is not None:
+                    recov.reset()                            # fresh state machine for the new episode
+        fps = a.steps / (time.time() - t0)
+        sm = float(np.std(np.diff(steers))) if len(steers) > 2 else 0.0   # weave: std of Δsteer
+        print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz "
+              f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}"
+              + (f" | recovery active {rev_steps} steps" if recov is not None else ""))
+    except KeyboardInterrupt:
+        print("\n[interrupted] Ctrl+C — shutting the sim down cleanly.")
+    except SimTimeout:
+        print(f"\n[watchdog] sim stalled >{a.sim_timeout}s (died or hung) — aborting cleanly.")
+    finally:                                            # ALWAYS release the sim + port (no zombies)
+        signal.alarm(0)
+        try:
+            env.close()
+        except Exception:
+            pass
+        if writer is not None:
+            writer.release(); print(f"wrote {a.record}")
+        if a.dump_frames:
+            print(f"dumped {dumped} raw frames -> {a.dump_frames}/")
 
 
 if __name__ == "__main__":
