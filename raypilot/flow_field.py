@@ -49,13 +49,18 @@ class FlowPart:
 class FlowField:
     def __init__(self, ref, ref_v, ray_kw,
                  band=(0.42, 0.90), grid_rows=6, grid_cols=6, min_span=6,
-                 seed_y=0.86, steer_gain=2.6, ema=0.4, goal_ema=0.3,
+                 seed_y=0.86, steer_gain=3.4, ema=0.4, goal_ema=0.3,
+                 persp_horizon=0.35, min_gap_frac=0.05,
                  offtrack_cov=0.10, offtrack_on=4, offtrack_off=3, exit_rows=6):
         self.ref, self.ref_v, self.ray_kw = ref, ref_v, ray_kw
         self.band, self.min_span, self.exit_rows = band, min_span, exit_rows
         self.fy = np.linspace(band[0], band[1], grid_rows)     # grid row fractions
         self.fx = np.linspace(0.20, 0.80, grid_cols)           # grid col fractions
         self.seed_y, self.steer_gain, self.ema, self.goal_ema = seed_y, steer_gain, ema, goal_ema
+        # STEERING reuses the calibrated ray-pilot law: ground-weighted free-space heading (NOT a
+        # goal-point heading, which is jittery). Same gain 3.4 / weighting validated vs PS4 telemetry.
+        self.persp_horizon, self.min_gap_frac = persp_horizon, min_gap_frac
+        self.angles = np.linspace(ray_kw["a0"], ray_kw["a1"], ray_kw["n_rays"])
         self.offtrack_cov, self.offtrack_on, self.offtrack_off = offtrack_cov, offtrack_on, offtrack_off
         self.reset()
 
@@ -70,11 +75,11 @@ class FlowField:
         eps, seed, _ = cast_rays(bgr, ref=self.ref, ref_v=self.ref_v, **self.ray_kw)
         m = np.zeros((H, W), np.uint8)
         cv2.fillPoly(m, [np.array([seed] + eps, np.int32)], 255)
-        return m, m.mean() / 255.0
+        return m, m.mean() / 255.0, np.asarray(eps, np.float32), seed
 
     def perceive(self, bgr):
         H, W = bgr.shape[:2]
-        m, cov = self._mask(bgr)
+        m, cov, ep, seed = self._mask(bgr)
         # per-row road centre -> corridor exit = centroid of the top (farthest) drivable rows
         rows = range(int(self.band[0] * H), int(self.band[1] * H))
         cen = {}
@@ -115,14 +120,18 @@ class FlowField:
                     ang = float(np.degrees(np.arctan2(py - self.goal[1], self.goal[0] - px)))
                 arrows.append((px, py, ang, drivable))
 
-        # steer = heading from the car (seed) to the goal
-        if self.goal is not None and not offtrack:
-            sx, sy = W / 2.0, self.seed_y * H
-            heading = float(np.degrees(np.arctan2(sy - self.goal[1], self.goal[0] - sx)))
-            err = (90.0 - heading) / 90.0                      # +ve -> goal is right -> steer right
+        # steer = ground-weighted FREE-SPACE HEADING (the calibrated ray-pilot law): each ray's angle
+        # weighted by the ground distance it cleared, so the heading points where the road is most open.
+        # Far more stable than a single goal-point heading. (The goal/arrows above are visualisation.)
+        lengths = np.hypot(ep[:, 0] - seed[0], ep[:, 1] - seed[1])
+        yh, mg = self.persp_horizon * H, self.min_gap_frac * H
+        w = np.clip(1.0 / np.maximum(ep[:, 1] - yh, mg) - 1.0 / max(seed[1] - yh, mg), 0.0, None)
+        if w.sum() > 1e-6 and not offtrack:
+            heading = float((w * self.angles).sum() / w.sum())
+            err = (90.0 - heading) / 90.0                      # +ve -> open side is right -> steer right
             raw = float(np.clip(self.steer_gain * err, -1.0, 1.0))
             self.s = self.ema * raw + (1 - self.ema) * self.s
-        # else: hold last steer (don't jerk)
+        # else (off-track / no clearance): hold last steer (don't jerk)
         return dict(mask=m, coverage=cov, arrows=arrows, goal=self.goal,
                     steer=float(self.s), offtrack=offtrack)
 
