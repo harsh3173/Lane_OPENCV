@@ -23,7 +23,7 @@ DRIVE, SLOW, STOP, REVERSE, STUCK = "DRIVE", "SLOW", "STOP", "REVERSE", "STUCK"
 class RecoveryController:
     def __init__(self, warn_cov=0.13, off_cov=0.10, recover_cov=0.15,
                  slow_throttle=0.10, reverse_throttle=-0.30, control_hz=20.0,
-                 offtrack_secs=1.5, stop_secs=0.4, max_reverse_secs=3.0, recover_secs=0.3,
+                 offtrack_secs=0.5, stop_secs=0.4, max_reverse_secs=3.0, recover_secs=0.3,
                  pulse_len=6, pulse_gap=3, reverse_steer_mode="hold"):
         self.warn_cov, self.off_cov, self.recover_cov = warn_cov, off_cov, recover_cov
         self.slow_throttle, self.reverse_throttle = slow_throttle, reverse_throttle

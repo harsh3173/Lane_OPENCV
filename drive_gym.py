@@ -93,7 +93,7 @@ def parse_args():
     p.add_argument("--reverse-steer", choices=["hold", "mirror", "straight"], default="hold",
                    help="steer while reversing: hold last-good (retrace), mirror, or straight")
     # time-based recovery sequencing (seconds; rate-independent via --control-hz)
-    p.add_argument("--offtrack-secs", type=float, default=1.5, help="off-track must persist this long before STOP+reverse")
+    p.add_argument("--offtrack-secs", type=float, default=0.5, help="off-track must persist this long before STOP+reverse")
     p.add_argument("--stop-secs", type=float, default=0.4, help="full-halt duration before reversing")
     p.add_argument("--max-reverse-secs", type=float, default=3.0, help="max time reversing before STUCK (safety cap)")
     p.add_argument("--control-hz", type=float, default=20.0, help="control-loop rate, to convert the *-secs into frames")
