@@ -10,7 +10,7 @@ this evaluation harness -- it never reaches perception or control, and the real 
 never sees it. The "steps survived" print is a sim-harness convenience derived from that reset signal.
 
     # 1) make a calibration profile from a recorded tub of the same track (one-off):
-    .venv/bin/python ray_pilot.py --img-dir tub_generated_track --white-margin 90 --color-thr 40 \
+    .venv/bin/python render_overlay.py --img-dir tub_generated_track --white-margin 90 --color-thr 40 \
         --wl 0.1 --horizon 0.35 --edge-thr 22 --weight ground --save-profile calib_sim.json --max-frames 1
     # 2) drive closed loop:
     .venv/bin/python drive_gym.py --profile calib_sim.json --env donkey-generated-track-v0 --steps 2000
@@ -24,7 +24,9 @@ import numpy as np
 
 def parse_args():
     p = argparse.ArgumentParser(description="Closed-loop ray pilot in donkey-gym")
-    p.add_argument("--profile", required=True, help="calibration profile from ray_pilot.py --save-profile")
+    p.add_argument("--profile", required=True, help="calibration profile from render_overlay.py --save-profile")
+    p.add_argument("--steer-mode", choices=["ray", "flow"], default="ray",
+                   help="ray = base free-space-heading pilot (default); flow = goal flow-field steering")
     p.add_argument("--env", default="donkey-generated-track-v0")
     p.add_argument("--steps", type=int, default=2000)
     p.add_argument("--throttle-scale", type=float, default=1.0)
@@ -41,6 +43,9 @@ def parse_args():
     p.add_argument("--steer-trim", type=float, default=None, help="constant steer offset to cancel center/camera bias")
     p.add_argument("--gain-left", type=float, default=None, help="steering gain for LEFT turns (asymmetry)")
     p.add_argument("--gain-right", type=float, default=None, help="steering gain for RIGHT turns (asymmetry)")
+    p.add_argument("--shadow-pass", dest="shadow_pass", action="store_true", default=None,
+                   help="shadow-robust rays: pass through dark+neutral patches (shadows/trees), stop on chroma/bright")
+    p.add_argument("--no-shadow-pass", dest="shadow_pass", action="store_false")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -88,33 +93,43 @@ def main():
         return
 
     import cv2
-    from raypilot.donkey_part import RayPilotPart
-    from raypilot.pilot import draw
     from raypilot.recovery import RecoveryController
 
-    part = RayPilotPart(a.profile, throttle_scale=a.throttle_scale, min_throttle=a.min_throttle,
-                        stop_on_offtrack=a.stop_offtrack, const_throttle=a.const_throttle)
-    if a.steer_gain is not None:                              # live calibration overrides
-        part.pilot.steer_gain = a.steer_gain
-    if a.weight is not None:
-        part.pilot.weight = a.weight
-    if a.ema is not None:
-        part.pilot.ema = a.ema
-    if a.deadband is not None:
-        part.pilot.steer_deadband = a.deadband
-    if a.steer_damp is not None:
-        part.pilot.steer_damp = a.steer_damp
-    if a.offtrack_cov is not None:
-        part.pilot.offtrack_cov = a.offtrack_cov
-    if a.steer_trim is not None:
-        part.pilot.steer_trim = a.steer_trim
-    if a.gain_left is not None:
-        part.pilot.gain_left = a.gain_left
-    if a.gain_right is not None:
-        part.pilot.gain_right = a.gain_right
-    print(f"steering: gain={part.pilot.steer_gain} weight={part.pilot.weight} ema={part.pilot.ema} "
-          f"deadband={part.pilot.steer_deadband} damp={part.pilot.steer_damp} "
-          f"trim={part.pilot.steer_trim} gainL={part.pilot.gain_left} gainR={part.pilot.gain_right}")
+    # --- build the steering agent (uniform interface: run/last_r/last_bgr; calib_target has ref/ref_v) ---
+    if a.steer_mode == "flow":
+        from raypilot.pilot import RayPilot
+        from raypilot.flow_field import FlowPart, draw as draw_fn
+        base = RayPilot.from_profile(a.profile)              # profile gives ref / ref_v / ray_kw
+        if a.shadow_pass is not None:
+            base.ray_kw["shadow_pass"] = a.shadow_pass
+        agent = FlowPart(base.ref, base.ref_v, base.ray_kw,
+                         const_throttle=(a.const_throttle if a.const_throttle is not None else 0.17),
+                         stop_on_offtrack=a.stop_offtrack,
+                         steer_gain=(a.steer_gain if a.steer_gain is not None else 2.6),
+                         ema=(a.ema if a.ema is not None else 0.4),
+                         offtrack_cov=(a.offtrack_cov if a.offtrack_cov is not None else 0.10))
+        calib_target, off_cov = agent.flow, agent.flow.offtrack_cov
+        print(f"steering: FLOW field | gain={agent.flow.steer_gain} ema={agent.flow.ema} "
+              f"offtrack_cov={off_cov} shadow_pass={base.ray_kw.get('shadow_pass')}")
+    else:
+        from raypilot.donkey_part import RayPilotPart
+        from raypilot.pilot import draw as draw_fn
+        agent = RayPilotPart(a.profile, throttle_scale=a.throttle_scale, min_throttle=a.min_throttle,
+                             stop_on_offtrack=a.stop_offtrack, const_throttle=a.const_throttle)
+        p = agent.pilot
+        if a.steer_gain is not None: p.steer_gain = a.steer_gain      # live calibration overrides
+        if a.weight is not None: p.weight = a.weight
+        if a.ema is not None: p.ema = a.ema
+        if a.deadband is not None: p.steer_deadband = a.deadband
+        if a.steer_damp is not None: p.steer_damp = a.steer_damp
+        if a.offtrack_cov is not None: p.offtrack_cov = a.offtrack_cov
+        if a.steer_trim is not None: p.steer_trim = a.steer_trim
+        if a.gain_left is not None: p.gain_left = a.gain_left
+        if a.gain_right is not None: p.gain_right = a.gain_right
+        if a.shadow_pass is not None: p.ray_kw["shadow_pass"] = a.shadow_pass
+        calib_target, off_cov = p, p.offtrack_cov
+        print(f"steering: RAY base | gain={p.steer_gain} weight={p.weight} ema={p.ema} "
+              f"shadow_pass={p.ray_kw.get('shadow_pass')} trim={p.steer_trim} gainL={p.gain_left} gainR={p.gain_right}")
     conf = {"host": a.host, "port": a.port, "car_name": "ray-pilot"}
     if a.sim_path != "remote":                          # else: attach to an already-running sim
         conf["exe_path"] = a.sim_path
@@ -150,18 +165,18 @@ def main():
             if done:
                 obs = reset(env)
         if refs:
-            part.pilot.ref = np.median(np.array([r for r, _ in refs]), axis=0)
-            part.pilot.ref_v = float(np.median([v for _, v in refs]))
-            rf = part.pilot.ref
+            calib_target.ref = np.median(np.array([r for r, _ in refs]), axis=0)
+            calib_target.ref_v = float(np.median([v for _, v in refs]))
+            rf = calib_target.ref
             print(f"live calibrated ref LAB({rf[0]:.0f},{rf[1]:.0f},{rf[2]:.0f}) "
-                  f"V{part.pilot.ref_v:.0f} (from {len(refs)} live frames)")
+                  f"V{calib_target.ref_v:.0f} (from {len(refs)} live frames)")
 
     recov = None
     if a.recovery:
-        recov = RecoveryController(warn_cov=a.warn_cov, off_cov=part.pilot.offtrack_cov,
+        recov = RecoveryController(warn_cov=a.warn_cov, off_cov=off_cov,
                                    recover_cov=a.recover_cov, reverse_throttle=a.reverse_throttle,
                                    max_reverse=a.max_reverse, reverse_steer_mode=a.reverse_steer)
-        print(f"recovery ON: warn<{a.warn_cov} off<{part.pilot.offtrack_cov} recover>{a.recover_cov} "
+        print(f"recovery ON: warn<{a.warn_cov} off<{off_cov} recover>{a.recover_cov} "
               f"reverse_thr={a.reverse_throttle} steer={a.reverse_steer}")
 
     if a.dump_frames:
@@ -171,19 +186,19 @@ def main():
     survived, episodes, dumped = 0, 0, 0
     t0, steers, rev_steps = time.time(), [], 0
     for step_i in range(a.steps):
-        angle, throttle = part.run(obs)                 # perceives obs ONCE (stored on the part)
-        if a.dump_frames and step_i % a.dump_stride == 0 and getattr(part, "last_bgr", None) is not None:
-            cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), part.last_bgr)  # RAW, no overlay
+        angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
+        if a.dump_frames and step_i % a.dump_stride == 0 and getattr(agent, "last_bgr", None) is not None:
+            cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), agent.last_bgr)  # RAW, no overlay
             dumped += 1
         rstate = "DRIVE"
-        if recov is not None and getattr(part, "last_r", None) is not None:
-            angle, throttle, rstate = recov.step(part.last_r["coverage"], angle, throttle)
+        if recov is not None and getattr(agent, "last_r", None) is not None:
+            angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
             if rstate in ("REVERSE", "STUCK"):
                 rev_steps += 1
         steers.append(angle)
-        if a.record and getattr(part, "last_r", None) is not None:
-            part.last_r["recovery"] = rstate             # surface state on the overlay
-            frame = draw(part.last_bgr, part.last_r)     # draw the SAME perception used for control
+        if a.record and getattr(agent, "last_r", None) is not None:
+            agent.last_r["recovery"] = rstate            # surface state on the overlay (ray draw uses it)
+            frame = draw_fn(agent.last_bgr, agent.last_r)   # draw the SAME perception used for control
             if writer is None:
                 H, W = frame.shape[:2]
                 writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*"mp4v"), 20, (W, H))

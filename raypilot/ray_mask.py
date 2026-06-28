@@ -46,7 +46,8 @@ def calibrate(paths, sample=150, seed_box=SEED_BOX):
 
 def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
               a0=8, a1=172, white_margin=45, white_s=60, color_thr=40, consec=3, step=1.0, wl=0.15,
-              ref=None, ref_v=None, horizon=0.0, edge_thr=22, edge_window=4, yellow_pass=True):
+              ref=None, ref_v=None, horizon=0.0, edge_thr=22, edge_window=4, yellow_pass=True,
+              shadow_pass=False):
     """Return (endpoints [(x,y)] in angle order, seed (x,y), ref_lab). Rays march until a STOP.
 
     A ray stops on:
@@ -86,10 +87,21 @@ def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
             # passes through it and coverage doesn't collapse when crossing/straddling the line
             is_yellow = yellow_pass and (15 <= h <= 40) and s > 80 and v > 80
             is_white = v > ref_v + white_margin and s < white_s
-            cdiff = np.sqrt(np.sum(wvec * (labp - ref) ** 2))            # vs global ref -> off-track
-            # local edge: sharp FULL-LAB jump vs a few px back -> a white line or grass boundary,
-            # while the road's own smooth gradient stays below the threshold
-            edge = len(trail) >= edge_window and np.linalg.norm(labp - trail[-edge_window]) > edge_thr
+            if shadow_pass:
+                # SHADOW-ROBUST: a shadow preserves chroma but drops lightness, so a DARKER-but-neutral
+                # pixel is road in shade (drivable). Penalise only POSITIVE dL (brighter -> desert /
+                # pavement edge / glare); darkening is free. Off-road still trips via chroma (grass /
+                # brown tree trunk) or the bright term. Local edge uses CHROMA only, so a shadow's hard
+                # brightness boundary doesn't stop the ray, while a coloured edge (foliage/dirt) does.
+                dL = max(float(labp[0] - ref[0]), 0.0)
+                cdiff = np.sqrt(wl * dL * dL + (labp[1] - ref[1]) ** 2 + (labp[2] - ref[2]) ** 2)
+                edge = (len(trail) >= edge_window and
+                        np.linalg.norm(labp[1:] - trail[-edge_window][1:]) > edge_thr)
+            else:
+                cdiff = np.sqrt(np.sum(wvec * (labp - ref) ** 2))        # vs global ref -> off-track
+                # local edge: sharp FULL-LAB jump vs a few px back -> a white line or grass boundary,
+                # while the road's own smooth gradient stays below the threshold
+                edge = len(trail) >= edge_window and np.linalg.norm(labp - trail[-edge_window]) > edge_thr
             if not is_yellow and (is_white or edge or cdiff > color_thr):
                 bad += 1
                 if bad >= consec:
@@ -133,6 +145,7 @@ def parse_args():
     p.add_argument("--horizon", type=float, default=0.0, help="rays can't climb above this y-fraction (sky guard; 0=off)")
     p.add_argument("--edge-thr", type=float, default=22, help="local LAB jump (vs a few px back) that stops a ray: white line / grass edge")
     p.add_argument("--edge-window", type=int, default=4, help="how many px back the local-edge compares against")
+    p.add_argument("--shadow-pass", action="store_true", help="shadow-robust: pass dark+neutral patches (shadows/trees); stop on chroma/bright")
     p.add_argument("--stride", type=int, default=1, help="process every Nth frame when writing masks")
     p.add_argument("--n", type=int, default=6)
     p.add_argument("--seed", type=int, default=1)
@@ -157,7 +170,8 @@ def numeric_key(p):
 def kwargs(a):
     return dict(seed_y=a.seed_y, n_rays=a.n_rays, a0=a.a0, a1=a.a1,
                white_margin=a.white_margin, white_s=a.white_s, color_thr=a.color_thr, consec=a.consec,
-               wl=a.wl, horizon=a.horizon, edge_thr=a.edge_thr, edge_window=a.edge_window)
+               wl=a.wl, horizon=a.horizon, edge_thr=a.edge_thr, edge_window=a.edge_window,
+               shadow_pass=a.shadow_pass)
 
 
 def main():

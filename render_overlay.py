@@ -33,6 +33,7 @@ def parse_args():
     p.add_argument("--horizon", type=float, default=0.0)
     p.add_argument("--edge-thr", type=float, default=22)
     p.add_argument("--edge-window", type=int, default=4)
+    p.add_argument("--shadow-pass", action="store_true", help="shadow-robust rays (pass dark+neutral patches)")
     p.add_argument("--weight", choices=["pixel", "ground"], default="pixel",
                    help="heading weight: pixel length, or perspective-corrected ground distance cleared")
     p.add_argument("--persp-horizon", type=float, default=0.35, help="ground weight: perspective horizon y-fraction")
@@ -65,7 +66,8 @@ def main():
         print(f"global ref LAB({ref[0]:.0f},{ref[1]:.0f},{ref[2]:.0f}) V{ref_v:.0f}")
         ray_kw = dict(seed_y=a.seed_y, n_rays=a.n_rays, a0=a.a0, a1=a.a1,
                       white_margin=a.white_margin, white_s=a.white_s, color_thr=a.color_thr,
-                      wl=a.wl, horizon=a.horizon, edge_thr=a.edge_thr, edge_window=a.edge_window)
+                      wl=a.wl, horizon=a.horizon, edge_thr=a.edge_thr, edge_window=a.edge_window,
+                      shadow_pass=a.shadow_pass)
         pilot = RayPilot(ref, ref_v, ray_kw, a.steer_gain, a.base_throttle, a.ema, a.offtrack_cov,
                          weight=a.weight, persp_horizon=a.persp_horizon, min_gap_frac=a.min_gap_frac)
         if a.save_profile:
