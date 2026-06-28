@@ -75,6 +75,9 @@ def parse_args():
     p.add_argument("--shadow-pass", dest="shadow_pass", action="store_true", default=None,
                    help="shadow-robust rays: pass through dark+neutral patches (shadows/trees), stop on chroma/bright")
     p.add_argument("--no-shadow-pass", dest="shadow_pass", action="store_false")
+    p.add_argument("--green-stop", dest="green_stop", action="store_true", default=None,
+                   help="stop rays on green+dark grass (off-track); on by default in ray_mask")
+    p.add_argument("--no-green-stop", dest="green_stop", action="store_false")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -139,6 +142,8 @@ def main():
         base = RayPilot.from_profile(a.profile)              # profile gives ref / ref_v / ray_kw
         if a.shadow_pass is not None:
             base.ray_kw["shadow_pass"] = a.shadow_pass
+        if a.green_stop is not None:
+            base.ray_kw["green_stop"] = a.green_stop
         agent = FlowPart(base.ref, base.ref_v, base.ray_kw,
                          const_throttle=(a.const_throttle if a.const_throttle is not None else 0.17),
                          stop_on_offtrack=a.stop_offtrack,
@@ -164,6 +169,7 @@ def main():
         if a.gain_left is not None: p.gain_left = a.gain_left
         if a.gain_right is not None: p.gain_right = a.gain_right
         if a.shadow_pass is not None: p.ray_kw["shadow_pass"] = a.shadow_pass
+        if a.green_stop is not None: p.ray_kw["green_stop"] = a.green_stop
         calib_target, off_cov = p, p.offtrack_cov
         print(f"steering: RAY base | gain={p.steer_gain} weight={p.weight} ema={p.ema} "
               f"shadow_pass={p.ray_kw.get('shadow_pass')} trim={p.steer_trim} gainL={p.gain_left} gainR={p.gain_right}")

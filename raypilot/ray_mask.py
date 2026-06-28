@@ -47,7 +47,7 @@ def calibrate(paths, sample=150, seed_box=SEED_BOX):
 def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
               a0=8, a1=172, white_margin=45, white_s=60, color_thr=40, consec=3, step=1.0, wl=0.15,
               ref=None, ref_v=None, horizon=0.0, edge_thr=22, edge_window=4, yellow_pass=True,
-              shadow_pass=False):
+              shadow_pass=False, green_stop=True, green_s=20, green_dark=15):
     """Return (endpoints [(x,y)] in angle order, seed (x,y), ref_lab). Rays march until a STOP.
 
     A ray stops on:
@@ -87,6 +87,10 @@ def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
             # passes through it and coverage doesn't collapse when crossing/straddling the line
             is_yellow = yellow_pass and (15 <= h <= 40) and s > 80 and v > 80
             is_white = v > ref_v + white_margin and s < white_s
+            # GRASS = off-track: green hue + darker than the road. Brightness-independent (works for
+            # dark or bright green) and robust where grass differs from grey road mainly in L, not
+            # chroma -> the weighted-LAB term alone can't catch it. Yellow line is excluded (it passes).
+            is_grass = green_stop and (35 <= h <= 90) and s > green_s and v < ref_v - green_dark
             if shadow_pass:
                 # SHADOW-ROBUST: a shadow preserves chroma but drops lightness, so a DARKER-but-neutral
                 # pixel is road in shade (drivable). Penalise only POSITIVE dL (brighter -> desert /
@@ -102,7 +106,7 @@ def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
                 # local edge: sharp FULL-LAB jump vs a few px back -> a white line or grass boundary,
                 # while the road's own smooth gradient stays below the threshold
                 edge = len(trail) >= edge_window and np.linalg.norm(labp - trail[-edge_window]) > edge_thr
-            if not is_yellow and (is_white or edge or cdiff > color_thr):
+            if not is_yellow and (is_white or is_grass or edge or cdiff > color_thr):
                 bad += 1
                 if bad >= consec:
                     break
