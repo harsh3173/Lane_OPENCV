@@ -80,6 +80,10 @@ def parse_args():
     p.add_argument("--green-stop", dest="green_stop", action="store_true", default=None,
                    help="stop rays on green+dark grass (off-track); on by default in ray_mask")
     p.add_argument("--no-green-stop", dest="green_stop", action="store_false")
+    # ray penetration overrides (None = use the profile's value) -- experiment with deeper rays
+    p.add_argument("--color-thr", type=float, default=None, help="override ray colour-stop threshold (higher = rays penetrate more)")
+    p.add_argument("--horizon", type=float, default=None, help="override horizon cap y-fraction (0 = no cap, rays climb to the top)")
+    p.add_argument("--edge-thr", type=float, default=None, help="override local-edge stop threshold (higher = penetrate more)")
     p.add_argument("--live-calib", dest="live_calib", action="store_true", default=True,
                    help="creep forward at start and calibrate the track colour from LIVE frames (default on)")
     p.add_argument("--no-live-calib", dest="live_calib", action="store_false")
@@ -149,6 +153,9 @@ def main():
             base.ray_kw["shadow_pass"] = a.shadow_pass
         if a.green_stop is not None:
             base.ray_kw["green_stop"] = a.green_stop
+        for k, val in (("color_thr", a.color_thr), ("horizon", a.horizon), ("edge_thr", a.edge_thr)):
+            if val is not None:
+                base.ray_kw[k] = val
         agent = FlowPart(base.ref, base.ref_v, base.ray_kw,
                          const_throttle=(a.const_throttle if a.const_throttle is not None else 0.17),
                          stop_on_offtrack=a.stop_offtrack,
@@ -175,6 +182,8 @@ def main():
         if a.gain_right is not None: p.gain_right = a.gain_right
         if a.shadow_pass is not None: p.ray_kw["shadow_pass"] = a.shadow_pass
         if a.green_stop is not None: p.ray_kw["green_stop"] = a.green_stop
+        for k, val in (("color_thr", a.color_thr), ("horizon", a.horizon), ("edge_thr", a.edge_thr)):
+            if val is not None: p.ray_kw[k] = val
         calib_target, off_cov = p, p.offtrack_cov
         print(f"steering: RAY base | gain={p.steer_gain} weight={p.weight} ema={p.ema} "
               f"shadow_pass={p.ray_kw.get('shadow_pass')} trim={p.steer_trim} gainL={p.gain_left} gainR={p.gain_right}")
