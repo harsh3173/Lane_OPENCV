@@ -23,8 +23,8 @@ DRIVE, SLOW, STOP, REVERSE, STUCK = "DRIVE", "SLOW", "STOP", "REVERSE", "STUCK"
 class RecoveryController:
     def __init__(self, warn_cov=0.13, off_cov=0.10, recover_cov=0.15,
                  slow_throttle=0.10, reverse_throttle=-0.30, control_hz=20.0,
-                 offtrack_secs=0.5, stop_secs=0.4, max_reverse_secs=3.0, recover_secs=0.3,
-                 pulse_len=6, pulse_gap=3, reverse_steer_mode="hold"):
+                 offtrack_secs=0.5, stop_secs=0.3, max_reverse_secs=3.0, recover_secs=0.3,
+                 stuck_secs=1.0, pulse_len=6, pulse_gap=3, reverse_steer_mode="hold"):
         self.warn_cov, self.off_cov, self.recover_cov = warn_cov, off_cov, recover_cov
         self.slow_throttle, self.reverse_throttle = slow_throttle, reverse_throttle
         hz = max(float(control_hz), 1.0)
@@ -33,6 +33,7 @@ class RecoveryController:
         self.stop_frames = max(1, int(round(stop_secs * hz)))    # halt duration before reversing
         self.max_reverse = max(1, int(round(max_reverse_secs * hz)))
         self.recover_frames = max(1, int(round(recover_secs * hz)))
+        self.stuck_frames = max(1, int(round(stuck_secs * hz)))  # cap on the STUCK halt -> resume forward
         # pulsed reverse: back up `pulse_len` frames, coast `pulse_gap` so perception re-settles
         self.pulse_len, self.pulse_gap = pulse_len, pulse_gap
         self.reverse_steer_mode = reverse_steer_mode             # "hold" (retrace) | "mirror" | "straight"
@@ -95,15 +96,19 @@ class RecoveryController:
                 self.state = DRIVE; self._rec = 0
                 return steer, throttle, DRIVE
             self._t += 1
-            if self._t >= self.max_reverse:    # safety cap -> give up reversing, hold
-                self.state = STUCK
+            if self._t >= self.max_reverse:    # reversing isn't working -> brief STUCK, then resume
+                self.state = STUCK; self._t = 0
                 return 0.0, 0.0, STUCK
             backing = (self._pulse_i % (self.pulse_len + self.pulse_gap)) < self.pulse_len
             self._pulse_i += 1
             return self._reverse_steer(), (self.reverse_throttle if backing else 0.0), REVERSE
 
-        # ---- STUCK: full stop, wait for the view to come back on its own ----
+        # ---- STUCK: brief halt; never sit stopped for long -> resume forward (moving > frozen) ----
         if self._reacquired(coverage):
+            self.state = DRIVE; self._rec = 0
+            return steer, throttle, DRIVE
+        self._t += 1
+        if self._t >= self.stuck_frames:       # give up waiting -> drive forward and try again
             self.state = DRIVE; self._rec = 0
             return steer, throttle, DRIVE
         return 0.0, 0.0, STUCK
