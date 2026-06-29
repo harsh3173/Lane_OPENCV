@@ -90,11 +90,15 @@ class RecoveryController:
                 self.state = REVERSE; self._t = 0; self._pulse_i = 0; self._rec = 0
             return 0.0, 0.0, STOP
 
-        # ---- REVERSE: pulsed back-up with held steer, checking if the track/direction is visible ----
+        # ---- REVERSE: pulsed back-up with held steer until the track/direction is visible ----
         if self.state == REVERSE:
-            if self._reacquired(coverage):     # track visible again -> resume forward (pilot steer valid)
-                self.state = DRIVE; self._rec = 0
-                return steer, throttle, DRIVE
+            if coverage >= self.recover_cov:   # track came back -> SUDDEN STOP, settle while HALTED
+                self._rec += 1                 # (do NOT keep reversing past the track during confirm)
+                if self._rec >= self.recover_frames:
+                    self.state = DRIVE; self._rec = 0
+                    return steer, throttle, DRIVE
+                return 0.0, 0.0, REVERSE        # halted, not reversing, while confirming
+            self._rec = 0                       # lost it again -> back up some more (the back-and-forth)
             self._t += 1
             if self._t >= self.max_reverse:    # reversing isn't working -> brief STUCK, then resume
                 self.state = STUCK; self._t = 0
