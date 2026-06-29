@@ -16,6 +16,7 @@ never sees it. The "steps survived" print is a sim-harness convenience derived f
     .venv/bin/python drive_gym.py --profile calib_sim.json --env donkey-generated-track-v0 --steps 2000
 """
 import argparse
+import collections
 import os
 import signal
 import subprocess
@@ -110,6 +111,8 @@ def parse_args():
     p.add_argument("--record", default=None, help="optional mp4 of the camera + overlay")
     p.add_argument("--dump-frames", default=None, help="dir: save RAW camera frames (no overlay) here for offline threshold tuning")
     p.add_argument("--dump-stride", type=int, default=2, help="save every Nth frame when --dump-frames")
+    p.add_argument("--episode-pre-secs", type=float, default=2.5,
+                   help="with --dump-frames: also save this many seconds of frames before each episode termination to episode_ends/ (the off-track + recovery window)")
     p.add_argument("--no-cleanup", dest="cleanup", action="store_false", default=True,
                    help="skip killing stale donkey_sim / drive_gym processes before launch")
     p.add_argument("--sim-timeout", type=int, default=15,
@@ -205,7 +208,7 @@ def main():
         return arr if arr.ndim == 3 and arr.shape[2] == 3 else None
 
     writer = recov = None
-    survived, episodes, dumped = 0, 0, 0
+    survived, episodes, dumped, ep_saved = 0, 0, 0, 0
     t0, steers, rev_steps = time.time(), [], 0
     try:
         obs = reset(env)
@@ -240,6 +243,9 @@ def main():
 
         if a.dump_frames:
             os.makedirs(a.dump_frames, exist_ok=True)
+        # rolling buffer of the most recent frames -> flushed to episode_ends/ on each termination,
+        # so we can inspect exactly what the camera saw (and what recovery did) right before going off
+        ep_buf = collections.deque(maxlen=max(1, int(a.episode_pre_secs * a.control_hz)))
 
         for step_i in range(a.steps):
             angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
@@ -251,6 +257,9 @@ def main():
                 angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
                 if rstate in ("REVERSE", "STUCK"):
                     rev_steps += 1
+            if a.dump_frames and getattr(agent, "last_bgr", None) is not None:   # every step (stride 1)
+                cov = agent.last_r["coverage"] if getattr(agent, "last_r", None) else -1
+                ep_buf.append((step_i, rstate, cov, agent.last_bgr.copy()))
             steers.append(angle)
             if a.record and getattr(agent, "last_r", None) is not None:
                 agent.last_r["recovery"] = rstate            # surface state on the overlay (ray draw uses it)
@@ -264,6 +273,14 @@ def main():
             if done:                                        # left track / timed out
                 episodes += 1
                 print(f"  episode end @ step {step_i} (survived {survived} steps)")
+                if a.dump_frames and ep_buf:                 # set aside the off-track + recovery window
+                    d = os.path.join(a.dump_frames, "episode_ends", f"ep{episodes:02d}_step{step_i:05d}")
+                    os.makedirs(d, exist_ok=True)
+                    for si, rs, cov, fr in ep_buf:           # filename encodes step, recovery state, coverage
+                        cv2.imwrite(os.path.join(d, f"{si:05d}_{rs}_cov{int(cov*100):03d}.jpg"), fr)
+                    ep_saved += len(ep_buf)
+                    print(f"    -> set aside {len(ep_buf)} pre-termination frames -> {d}")
+                    ep_buf.clear()
                 obs = reset(env); survived = 0
                 if recov is not None:
                     recov.reset()                            # fresh state machine for the new episode
@@ -285,7 +302,8 @@ def main():
         if writer is not None:
             writer.release(); print(f"wrote {a.record}")
         if a.dump_frames:
-            print(f"dumped {dumped} raw frames -> {a.dump_frames}/")
+            print(f"dumped {dumped} raw frames -> {a.dump_frames}/ | "
+                  f"{ep_saved} frames set aside across {episodes} episode_ends/")
 
 
 if __name__ == "__main__":
