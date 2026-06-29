@@ -98,7 +98,9 @@ def parse_args():
     p.add_argument("--no-recovery", dest="recovery", action="store_false")
     p.add_argument("--warn-cov", type=float, default=0.13, help="coverage below this -> SLOW (early caution)")
     p.add_argument("--recover-cov", type=float, default=0.15, help="coverage above this (sustained) -> resume forward")
-    p.add_argument("--reverse-throttle", type=float, default=-0.30, help="throttle while backing up (negative)")
+    p.add_argument("--reverse-throttle", type=float, default=-0.15, help="throttle while backing up (negative; gentler = stops quicker)")
+    p.add_argument("--reverse-pulse", type=int, default=3, help="frames of reverse per step (smaller = more minimal back-up steps)")
+    p.add_argument("--reverse-gap", type=int, default=2, help="coast frames between reverse pulses (re-check coverage)")
     p.add_argument("--reverse-steer", choices=["hold", "mirror", "straight"], default="hold",
                    help="steer while reversing: hold last-good (retrace), mirror, or straight")
     # time-based recovery sequencing (seconds; rate-independent via --control-hz)
@@ -246,6 +248,7 @@ def main():
                                        reverse_throttle=a.reverse_throttle, control_hz=a.control_hz,
                                        offtrack_secs=a.offtrack_secs, stop_secs=a.stop_secs,
                                        max_reverse_secs=a.max_reverse_secs, stuck_secs=a.stuck_secs,
+                                       pulse_len=a.reverse_pulse, pulse_gap=a.reverse_gap,
                                        reverse_steer_mode=a.reverse_steer)
             print(f"recovery ON: confirm {a.offtrack_secs}s off<{off_cov} -> STOP {a.stop_secs}s -> reverse "
                   f"(thr {a.reverse_throttle}, steer {a.reverse_steer}, max {a.max_reverse_secs}s) -> "
