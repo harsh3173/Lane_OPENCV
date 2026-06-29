@@ -47,7 +47,7 @@ def calibrate(paths, sample=150, seed_box=SEED_BOX):
 def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
               a0=8, a1=172, white_margin=45, white_s=60, color_thr=40, consec=3, step=1.0, wl=0.15,
               ref=None, ref_v=None, horizon=0.0, edge_thr=22, edge_window=4, yellow_pass=True,
-              shadow_pass=False, green_stop=True, green_s=20, green_dark=15):
+              shadow_pass=False, green_stop=True, green_s=20, green_dark=15, yellow_v=180):
     """Return (endpoints [(x,y)] in angle order, seed (x,y), ref_lab). Rays march until a STOP.
 
     A ray stops on:
@@ -83,14 +83,15 @@ def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
                 break
             h, s, v = hsv[yi, xi, 0], hsv[yi, xi, 1], hsv[yi, xi, 2]
             labp = lab[yi, xi]
-            # a yellow lane line is DRIVABLE (the car may cross it) -> never a stop, so the ray
-            # passes through it and coverage doesn't collapse when crossing/straddling the line
-            is_yellow = yellow_pass and (15 <= h <= 40) and s > 80 and v > 80
+            # a yellow lane line is DRIVABLE (the car may cross it) -> never a stop. The line is
+            # near-WHITE-bright (V~253), so require high V: this excludes dark yellow-green GRASS
+            # (V~108, same hue) which otherwise sneaks through as "yellow" and lets rays cross it.
+            is_yellow = yellow_pass and (15 <= h <= 45) and s > 80 and v > yellow_v
             is_white = v > ref_v + white_margin and s < white_s
-            # GRASS = off-track: green hue + darker than the road. Brightness-independent (works for
-            # dark or bright green) and robust where grass differs from grey road mainly in L, not
-            # chroma -> the weighted-LAB term alone can't catch it. Yellow line is excluded (it passes).
-            is_grass = green_stop and (35 <= h <= 90) and s > green_s and v < ref_v - green_dark
+            # GRASS = off-track: green/yellow-green hue + darker than the road. Brightness-independent
+            # (dark or bright green) and robust where grass differs from grey road mainly in L, not
+            # chroma. Hue floor 30 catches the yellow-green grass; the bright line is excluded by V.
+            is_grass = green_stop and (30 <= h <= 90) and s > green_s and v < ref_v - green_dark
             if shadow_pass:
                 # SHADOW-ROBUST: a shadow preserves chroma but drops lightness, so a DARKER-but-neutral
                 # pixel is road in shade (drivable). Penalise only POSITIVE dL (brighter -> desert /
