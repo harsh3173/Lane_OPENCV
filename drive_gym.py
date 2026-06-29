@@ -101,8 +101,10 @@ def parse_args():
     p.add_argument("--reverse-throttle", type=float, default=-0.15, help="throttle while backing up (negative; gentler = stops quicker)")
     p.add_argument("--reverse-pulse", type=int, default=3, help="frames of reverse per step (smaller = more minimal back-up steps)")
     p.add_argument("--reverse-gap", type=int, default=2, help="coast frames between reverse pulses (re-check coverage)")
-    p.add_argument("--reverse-steer", choices=["hold", "mirror", "straight"], default="hold",
-                   help="steer while reversing: hold last-good (retrace), mirror, or straight")
+    p.add_argument("--reverse-steer", choices=["align", "hold", "mirror", "straight"], default="align",
+                   help="steer while reversing: align (rotate parallel to track), hold (retrace), mirror, straight")
+    p.add_argument("--align-gain", type=float, default=1.0, help="align mode: how hard to rotate toward parallel")
+    p.add_argument("--align-thr", type=float, default=0.30, help="align mode: |steer| below this = aligned -> resume")
     # time-based recovery sequencing (seconds; rate-independent via --control-hz)
     p.add_argument("--offtrack-secs", type=float, default=0.5, help="off-track must persist this long before STOP+reverse")
     p.add_argument("--stop-secs", type=float, default=0.3, help="full-halt duration before reversing")
@@ -249,7 +251,8 @@ def main():
                                        offtrack_secs=a.offtrack_secs, stop_secs=a.stop_secs,
                                        max_reverse_secs=a.max_reverse_secs, stuck_secs=a.stuck_secs,
                                        pulse_len=a.reverse_pulse, pulse_gap=a.reverse_gap,
-                                       reverse_steer_mode=a.reverse_steer)
+                                       reverse_steer_mode=a.reverse_steer,
+                                       align_gain=a.align_gain, align_thr=a.align_thr)
             print(f"recovery ON: confirm {a.offtrack_secs}s off<{off_cov} -> STOP {a.stop_secs}s -> reverse "
                   f"(thr {a.reverse_throttle}, steer {a.reverse_steer}, max {a.max_reverse_secs}s) -> "
                   f"recover>{a.recover_cov} | @{a.control_hz:.0f}Hz")
