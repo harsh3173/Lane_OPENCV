@@ -224,6 +224,7 @@ def main():
     writer = recov = None
     survived, episodes, dumped, ep_saved = 0, 0, 0, 0
     t0, steers, rev_steps = time.time(), [], 0
+    rec_active, rec_start, rec_durs = False, 0, []        # recovery-event durations (STOP/REVERSE/STUCK)
     try:
         obs = reset(env)
 
@@ -273,6 +274,11 @@ def main():
                 angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
                 if rstate in ("REVERSE", "STUCK"):
                     rev_steps += 1
+                is_rec = rstate in ("STOP", "REVERSE", "STUCK")   # a recovery EVENT (not SLOW caution)
+                if is_rec and not rec_active:
+                    rec_active, rec_start = True, step_i
+                elif not is_rec and rec_active:
+                    rec_active = False; rec_durs.append(step_i - rec_start)
             if a.dump_frames and getattr(agent, "last_bgr", None) is not None:   # every step (stride 1)
                 cov = agent.last_r["coverage"] if getattr(agent, "last_r", None) else -1
                 ep_buf.append((step_i, rstate, cov, agent.last_bgr.copy()))
@@ -300,11 +306,20 @@ def main():
                 obs = reset(env); survived = 0
                 if recov is not None:
                     recov.reset()                            # fresh state machine for the new episode
+        if rec_active:                                    # close an episode still open at the end
+            rec_durs.append(a.steps - rec_start)
         fps = a.steps / (time.time() - t0)
+        hz = fps if fps > 1 else a.control_hz             # seconds-per-step from the real loop rate
         sm = float(np.std(np.diff(steers))) if len(steers) > 2 else 0.0   # weave: std of Δsteer
         print(f"done. {a.steps} steps, {episodes} resets, control loop ~{fps:.0f} Hz "
-              f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}"
-              + (f" | recovery active {rev_steps} steps" if recov is not None else ""))
+              f"| steer smoothness (std Δsteer) {sm:.3f}  mean|steer| {np.mean(np.abs(steers)):.2f}")
+        if recov is not None:
+            if rec_durs:
+                ds = sorted(d / hz for d in rec_durs)
+                print(f"recovery: {len(rec_durs)} event(s), {rev_steps} active steps | "
+                      f"duration mean {np.mean(ds):.1f}s  max {ds[-1]:.1f}s  total {sum(ds):.1f}s")
+            else:
+                print("recovery: not triggered (car stayed on track)")
     except KeyboardInterrupt:
         print("\n[interrupted] Ctrl+C — shutting the sim down cleanly.")
     except SimTimeout:
