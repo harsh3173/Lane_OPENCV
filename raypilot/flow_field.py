@@ -49,14 +49,14 @@ class FlowPart:
 class FlowField:
     def __init__(self, ref, ref_v, ray_kw,
                  band=(0.42, 0.90), grid_rows=6, grid_cols=6, min_span=6,
-                 seed_y=0.86, steer_gain=3.4, ema=0.4, goal_ema=0.3,
+                 seed_y=0.86, steer_gain=3.4, ema=0.4, goal_ema=0.3, cov_ema=0.5,
                  persp_horizon=0.35, min_gap_frac=0.05,
                  offtrack_cov=0.10, offtrack_on=4, offtrack_off=3, exit_rows=6):
         self.ref, self.ref_v, self.ray_kw = ref, ref_v, ray_kw
         self.band, self.min_span, self.exit_rows = band, min_span, exit_rows
         self.fy = np.linspace(band[0], band[1], grid_rows)     # grid row fractions
         self.fx = np.linspace(0.20, 0.80, grid_cols)           # grid col fractions
-        self.seed_y, self.steer_gain, self.ema, self.goal_ema = seed_y, steer_gain, ema, goal_ema
+        self.seed_y, self.steer_gain, self.ema, self.goal_ema, self.cov_ema = seed_y, steer_gain, ema, goal_ema, cov_ema
         # STEERING reuses the calibrated ray-pilot law: ground-weighted free-space heading (NOT a
         # goal-point heading, which is jittery). Same gain 3.4 / weighting validated vs PS4 telemetry.
         self.persp_horizon, self.min_gap_frac = persp_horizon, min_gap_frac
@@ -67,6 +67,7 @@ class FlowField:
     def reset(self):
         self.s = 0.0
         self.goal = None                                       # EMA-smoothed goal (corridor exit) x,y
+        self.cov_s = None                                      # short EMA on coverage (denoise off-track)
         self._low = self._good = 0
         self.offtrack_state = False
 
@@ -80,6 +81,10 @@ class FlowField:
     def perceive(self, bgr):
         H, W = bgr.shape[:2]
         m, cov, ep, seed = self._mask(bgr)
+        # short EMA on coverage -> off-track + recovery ride a denoised signal (cov_ema 0.5 = ~2-frame,
+        # responsive, not laggy). Single-frame dips no longer flip the flag.
+        self.cov_s = cov if self.cov_s is None else self.cov_ema * cov + (1 - self.cov_ema) * self.cov_s
+        cov = self.cov_s
         # per-row road centre -> corridor exit = centroid of the top (farthest) drivable rows
         rows = range(int(self.band[0] * H), int(self.band[1] * H))
         cen = {}

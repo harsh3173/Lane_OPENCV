@@ -67,6 +67,7 @@ def parse_args():
     p.add_argument("--steer-gain", type=float, default=None, help="override steering gain")
     p.add_argument("--weight", choices=["pixel", "ground"], default=None, help="override heading weight")
     p.add_argument("--ema", type=float, default=None, help="override steer/throttle smoothing (lower=smoother)")
+    p.add_argument("--cov-ema", type=float, default=0.5, help="flow: coverage EMA for off-track (lower=smoother/laggier; ~0.5 = short)")
     p.add_argument("--deadband", type=float, default=None, help="anti-weave deadband on heading error (e.g. 0.1)")
     p.add_argument("--steer-damp", type=float, default=None, help="PD damping term (e.g. 0.4) to smooth overshoot")
     p.add_argument("--offtrack-cov", type=float, default=None, help="coverage below this = off-track (e.g. 0.10)")
@@ -152,7 +153,7 @@ def main():
                          const_throttle=(a.const_throttle if a.const_throttle is not None else 0.17),
                          stop_on_offtrack=a.stop_offtrack,
                          steer_gain=(a.steer_gain if a.steer_gain is not None else 3.4),  # validated ray-heading gain
-                         ema=(a.ema if a.ema is not None else 0.4),
+                         ema=(a.ema if a.ema is not None else 0.4), cov_ema=a.cov_ema,
                          offtrack_cov=(a.offtrack_cov if a.offtrack_cov is not None else 0.10))
         calib_target, off_cov = agent.flow, agent.flow.offtrack_cov
         print(f"steering: FLOW field | gain={agent.flow.steer_gain} ema={agent.flow.ema} "
