@@ -47,7 +47,8 @@ def calibrate(paths, sample=150, seed_box=SEED_BOX):
 def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
               a0=8, a1=172, white_margin=45, white_s=60, color_thr=40, consec=3, step=1.0, wl=0.15,
               ref=None, ref_v=None, horizon=0.0, edge_thr=22, edge_window=4, yellow_pass=True,
-              shadow_pass=False, green_stop=True, green_s=20, green_dark=15, yellow_v=180):
+              shadow_pass=False, green_stop=True, green_s=20, green_dark=15, yellow_v=180,
+              dark_bypass=1.0):
     """Return (endpoints [(x,y)] in angle order, seed (x,y), ref_lab). Rays march until a STOP.
 
     A ray stops on:
@@ -98,7 +99,8 @@ def cast_rays(bgr, seed_y=0.85, seed_box=SEED_BOX, n_rays=80,
                 # pavement edge / glare); darkening is free. Off-road still trips via chroma (grass /
                 # brown tree trunk) or the bright term. Local edge uses CHROMA only, so a shadow's hard
                 # brightness boundary doesn't stop the ray, while a coloured edge (foliage/dirt) does.
-                dL = max(float(labp[0] - ref[0]), 0.0)
+                dl_raw = float(labp[0] - ref[0])           # brightening fully penalised; darkening
+                dL = dl_raw if dl_raw >= 0 else dl_raw * (1.0 - dark_bypass)   # bypassed by dark_bypass
                 cdiff = np.sqrt(wl * dL * dL + (labp[1] - ref[1]) ** 2 + (labp[2] - ref[2]) ** 2)
                 edge = (len(trail) >= edge_window and
                         np.linalg.norm(labp[1:] - trail[-edge_window][1:]) > edge_thr)
