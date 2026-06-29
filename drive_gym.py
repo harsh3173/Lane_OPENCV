@@ -122,6 +122,12 @@ def parse_args():
     p.add_argument("--dump-stride", type=int, default=2, help="save every Nth frame when --dump-frames")
     p.add_argument("--episode-pre-secs", type=float, default=2.5,
                    help="with --dump-frames: also save this many seconds of frames before each episode termination to episode_ends/ (the off-track + recovery window)")
+    # scripted disturbance to TEST recovery (the pilot is too good to go off on its own)
+    p.add_argument("--test-maneuver", action="store_true",
+                   help="periodically force a hard turn off-track (alternating L/R) to exercise recovery")
+    p.add_argument("--disturb-every", type=float, default=8.0, help="seconds between forced off-track turns")
+    p.add_argument("--disturb-dur", type=float, default=1.2, help="seconds of forced hard turn (drives off the track)")
+    p.add_argument("--disturb-steer", type=float, default=1.0, help="steer magnitude of the forced turn")
     p.add_argument("--no-cleanup", dest="cleanup", action="store_false", default=True,
                    help="skip killing stale donkey_sim / drive_gym processes before launch")
     p.add_argument("--sim-timeout", type=int, default=15,
@@ -264,13 +270,22 @@ def main():
         # so we can inspect exactly what the camera saw (and what recovery did) right before going off
         ep_buf = collections.deque(maxlen=max(1, int(a.episode_pre_secs * a.control_hz)))
 
+        period = max(1, int(a.disturb_every * a.control_hz))
+        dur = max(1, int(a.disturb_dur * a.control_hz))
         for step_i in range(a.steps):
             angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
             if a.dump_frames and step_i % a.dump_stride == 0 and getattr(agent, "last_bgr", None) is not None:
                 cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), agent.last_bgr)  # RAW, no overlay
                 dumped += 1
-            rstate = "DRIVE"
-            if recov is not None and getattr(agent, "last_r", None) is not None:
+            # --- scripted disturbance: drive straight under the pilot, then FORCE a hard turn off-track
+            # at the end of each cycle (alternating L/R = the mirror), then release -> recovery catches it
+            disturbing = a.test_maneuver and (step_i % period) >= (period - dur)
+            if disturbing:
+                side = -1.0 if (step_i // period) % 2 == 0 else 1.0   # left first, then its mirror (right)
+                angle = side * a.disturb_steer
+                throttle = a.const_throttle if a.const_throttle is not None else 0.20
+            rstate = "FORCED" if disturbing else "DRIVE"
+            if recov is not None and not disturbing and getattr(agent, "last_r", None) is not None:
                 angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
                 if rstate in ("REVERSE", "STUCK"):
                     rev_steps += 1
