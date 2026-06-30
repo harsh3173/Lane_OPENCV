@@ -125,8 +125,9 @@ def parse_args():
     # scripted disturbance to TEST recovery (the pilot is too good to go off on its own)
     p.add_argument("--test-maneuver", action="store_true",
                    help="periodically force a hard turn off-track (alternating L/R) to exercise recovery")
-    p.add_argument("--disturb-every", type=float, default=8.0, help="seconds between forced off-track turns")
-    p.add_argument("--disturb-dur", type=float, default=1.2, help="seconds of forced hard turn (drives off the track)")
+    p.add_argument("--disturb-start", type=float, default=35.0, help="seconds to drive cleanly before the FIRST forced turn (~2 laps)")
+    p.add_argument("--disturb-every", type=float, default=20.0, help="seconds between forced off-track turns (~once a lap+)")
+    p.add_argument("--disturb-dur", type=float, default=1.0, help="seconds of forced hard turn (drives off the track)")
     p.add_argument("--disturb-steer", type=float, default=1.0, help="steer magnitude of the forced turn")
     p.add_argument("--no-cleanup", dest="cleanup", action="store_false", default=True,
                    help="skip killing stale donkey_sim / drive_gym processes before launch")
@@ -272,16 +273,18 @@ def main():
 
         period = max(1, int(a.disturb_every * a.control_hz))
         dur = max(1, int(a.disturb_dur * a.control_hz))
+        dstart = int(a.disturb_start * a.control_hz)        # drive clean for ~2 laps before disturbing
         for step_i in range(a.steps):
             angle, throttle = agent.run(obs)                # perceives obs ONCE (stored on the agent)
             if a.dump_frames and step_i % a.dump_stride == 0 and getattr(agent, "last_bgr", None) is not None:
                 cv2.imwrite(os.path.join(a.dump_frames, f"{step_i:05d}.jpg"), agent.last_bgr)  # RAW, no overlay
                 dumped += 1
-            # --- scripted disturbance: drive straight under the pilot, then FORCE a hard turn off-track
+            # --- scripted disturbance: drive clean for disturb_start, then FORCE a hard turn off-track
             # at the end of each cycle (alternating L/R = the mirror), then release -> recovery catches it
-            disturbing = a.test_maneuver and (step_i % period) >= (period - dur)
+            sd = step_i - dstart
+            disturbing = a.test_maneuver and sd >= 0 and (sd % period) >= (period - dur)
             if disturbing:
-                side = -1.0 if (step_i // period) % 2 == 0 else 1.0   # left first, then its mirror (right)
+                side = -1.0 if (sd // period) % 2 == 0 else 1.0      # left first, then its mirror (right)
                 angle = side * a.disturb_steer
                 throttle = a.const_throttle if a.const_throttle is not None else 0.20
             rstate = "FORCED" if disturbing else "DRIVE"
