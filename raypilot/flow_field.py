@@ -167,4 +167,16 @@ def draw(bgr, r, scale=4):
     cv2.putText(c, status, (8, 48), f, 0.6, (0, 0, 255) if r["offtrack"] else (0, 220, 0), 2)
     if r["offtrack"]:
         cv2.rectangle(c, (0, 0), (W * s - 1, H * s - 1), (0, 0, 255), 5)
+    # forced-disturbance flag (test maneuver) — show side + how long the override has been active
+    fr = r.get("forced")
+    if fr is not None:
+        side, el, tot = fr
+        cv2.putText(c, f">> DISTURB {side} {el:.1f}/{tot:.1f}s", (8, 72), f, 0.62, (0, 0, 255), 2)
+        cv2.rectangle(c, (0, 0), (W * s - 1, H * s - 1), (0, 0, 255), 8)   # thick red border while forced
+    else:                                                      # else show the recovery state if active
+        rs = r.get("recovery")
+        if rs and rs not in ("DRIVE", "FORCED"):
+            rcol = {"SLOW": (0, 200, 255), "STOP": (0, 165, 255), "REVERSE": (0, 0, 255),
+                    "STUCK": (0, 0, 200)}.get(rs, (255, 255, 255))
+            cv2.putText(c, f"RECOVERY: {rs}", (8, 72), f, 0.62, rcol, 2)
     return c

@@ -283,10 +283,14 @@ def main():
             # at the end of each cycle (alternating L/R = the mirror), then release -> recovery catches it
             sd = step_i - dstart
             disturbing = a.test_maneuver and sd >= 0 and (sd % period) < dur   # turn at the start of each cycle
+            forced_info = None
             if disturbing:
                 side = -1.0 if (sd // period) % 2 == 0 else 1.0      # left first, then its mirror (right)
                 angle = side * a.disturb_steer
                 throttle = a.const_throttle if a.const_throttle is not None else 0.20
+                forced_info = ("LEFT" if side < 0 else "RIGHT", (sd % period) / a.control_hz, a.disturb_dur)
+            if getattr(agent, "last_r", None) is not None:
+                agent.last_r["forced"] = forced_info          # for the overlay flag (None when not forced)
             rstate = "FORCED" if disturbing else "DRIVE"
             if recov is not None and not disturbing and getattr(agent, "last_r", None) is not None:
                 angle, throttle, rstate = recov.step(agent.last_r["coverage"], angle, throttle)
