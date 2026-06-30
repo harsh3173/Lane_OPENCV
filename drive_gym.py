@@ -282,7 +282,7 @@ def main():
             # --- scripted disturbance: drive clean for disturb_start, then FORCE a hard turn off-track
             # at the end of each cycle (alternating L/R = the mirror), then release -> recovery catches it
             sd = step_i - dstart
-            disturbing = a.test_maneuver and sd >= 0 and (sd % period) >= (period - dur)
+            disturbing = a.test_maneuver and sd >= 0 and (sd % period) < dur   # turn at the start of each cycle
             if disturbing:
                 side = -1.0 if (sd // period) % 2 == 0 else 1.0      # left first, then its mirror (right)
                 angle = side * a.disturb_steer
